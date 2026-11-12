@@ -1,14 +1,14 @@
 {
   "obsidian": 1,
-  "id": "alomare.worldgen",
+  "id": "obsidian.worldgen",
   "version": "0.1.0",
-  "name": { "en": "World Generator" },
+  "name": { "en": "Obsidian Worldgen" },
   "description": { "en": "A library for mods that change how mission maps are made: bigger maps, new outlines, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Does nothing until another mod uses it." },
   "authors": ["Alomare"],
   "scope": "library",
   "every_player": true,
   "entry": "main.lua",
-  "source": "https://github.com/Alomare/HD1-WorldGenerator",
+  "source": "https://github.com/Alomare/ObsidianWorldgen",
   "modules": [
     "src/rng.lua",
     "src/grid.lua",
