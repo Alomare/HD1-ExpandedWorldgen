@@ -1,6 +1,6 @@
--- Obsidian Worldgen: entry script. A library: it changes nothing until another mod gives it a rule.
+-- Expanded Worldgen: entry script. A library: it changes nothing until another mod gives it a rule.
 --
---   local worldgen = obsidian.import("obsidian.worldgen")
+--   local worldgen = obsidian.import("alomare.expandedworldgen")
 --   worldgen.rule(function(mission)
 --       -- mission: seed, layout, environment, enemy, difficulty, time_of_day, preview
 --       return { shape = "ring", size = 1.5, biomes = { "snow" }, relief = 6 }
@@ -88,5 +88,5 @@ function api.current()
 	return { profile = wg.profile.id, blocks = wg.blocks, biomes = names, top = wg.relief and wg.relief.top or 0 }
 end
 
-obsidian.log("Obsidian Worldgen ready")
+obsidian.log("Expanded Worldgen ready")
 return api

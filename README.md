@@ -1,16 +1,16 @@
-# Obsidian Worldgen
+# Expanded Worldgen
 
 A library for HELLDIVERS (2015) mods, for [Obsidian Launcher](https://github.com/Alomare/ObsidianLauncher).
 
-Obsidian Worldgen changes how the maps of planet missions are made: size, outline, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Installed alone, the library changes nothing. A mod gives the library a rule, and the rule answers a profile for each mission.
+Expanded Worldgen changes how the maps of planet missions are made: size, outline, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Installed alone, the library changes nothing. A mod gives the library a rule, and the rule answers a profile for each mission.
 
-[New Worlds](https://github.com/Alomare/HD1-NewWorlds) is a mod built on the library, with every feature as an option.
+[Revamped Maps](https://github.com/Alomare/HD1-RevampedMaps) is a mod built on the library, with every feature as an option.
 
 ## How it works
 
 The game builds a map in steps: the outline, the objectives, the set pieces, the edge, the plain ground, then the loading of every piece. Every machine in the lobby runs those steps from the mission seed and gets the same map.
 
-Obsidian Worldgen wraps each step. The outline and the biome of each part of the ground come from the profile. The placing of objectives and set pieces and the tracing of the edge stay the code of the game, run on the ground the library prepared. Heights, props and backdrop are worked out after the game finished placing, and each piece is then loaded from the biome it belongs to, at the height and tilt the terrain gives it.
+Expanded Worldgen wraps each step. The outline and the biome of each part of the ground come from the profile. The placing of objectives and set pieces and the tracing of the edge stay the code of the game, run on the ground the library prepared. Heights, props and backdrop are worked out after the game finished placing, and each piece is then loaded from the biome it belongs to, at the height and tilt the terrain gives it.
 
 Everything is drawn from the mission seed with a random stream of the library, so the briefing map, the mission and every machine agree.
 
@@ -19,11 +19,11 @@ Everything is drawn from the mission seed with a random stream of the library, s
 ```json
 "scope": "session",
 "every_player": true,
-"requires": ["obsidian.worldgen"]
+"requires": ["alomare.expandedworldgen"]
 ```
 
 ```lua
-local worldgen = obsidian.import("obsidian.worldgen")
+local worldgen = obsidian.import("alomare.expandedworldgen")
 
 worldgen.rule(function(mission)
     -- mission: seed, layout, environment, enemy, difficulty, time_of_day, preview
