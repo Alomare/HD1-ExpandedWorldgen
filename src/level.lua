@@ -753,15 +753,9 @@ function M.install(hook)
 		return original(self, ...)
 	end)
 
-	-- Relief: positions the game works out on the flat (z 0) are lifted to the ground.
-	guarded("get_closest_position_on_level", function(original, self, wg, ...)
-		local pos = original(self, ...)
-		if wg.relief and pos and M.active == self then
-			local Vector3 = G("Vector3")
-			return Vector3(pos.x, pos.y, math.max(pos.z, wg.relief.height(pos.x, pos.y)))
-		end
-		return pos
-	end)
+	-- Relief: what the game spawns below the ground is lifted to it. `get_closest_position_on_level`
+	-- stays the game's: the camera calls it each frame from a point at z 0 and moves by the
+	-- difference, so a lifted answer makes the camera climb without end.
 	hook("EntitySpawner", "spawn_entity", function(original, self, path, pos, ...)
 		local wg = M.active and M.active.wg
 		if wg and wg.relief and pos then

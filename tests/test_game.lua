@@ -242,9 +242,10 @@ test("relief: pieces are lifted and tilted, wide ones as one plane, and the edge
 					end
 				end
 			end
-			-- Positions the game asks for are lifted to the ground.
-			local p = l:get_closest_position_on_level(rawget(_G, "Vector3")(-50, -50, 0))
-			near(p.z, l.wg.relief.height(p.x, p.y), 1e-6, "closest position on the ground")
+			-- The camera asks for the closest position from a point on the z 0 plane each frame and moves
+			-- by the difference: an answer with any other z sends it climbing without end.
+			local p = l:get_closest_position_on_level(rawget(_G, "Vector3")(-50, -50, 0), nil, 0, true)
+			eq(p.z, 0, "closest position keeps the z the camera asked with")
 			eq(level.height(p.x, p.y), l.wg.relief.height(p.x, p.y))
 		end
 	end
