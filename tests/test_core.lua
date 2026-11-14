@@ -157,7 +157,7 @@ end
 -- The four corners of a piece's footprint as its level carries them: the game's flat spot of each
 -- corner, and where the piece's position and rotation put it.
 local function corners(e, r)
-	local pos, q = r.place(e)
+	local pos, q, stretch = r.place(e)
 	local rot = e.rot
 	local px, py = 24 * e.x, 24 * e.y
 	if rot == 1 or rot == 2 then px = px + 24 end
@@ -166,7 +166,7 @@ local function corners(e, r)
 	local out = {}
 	for _, c in ipairs({ { 0, 0 }, { 24 * e.size_x, 0 }, { 0, 24 * e.size_y }, { 24 * e.size_x, 24 * e.size_y } }) do
 		local fx, fy = relief.rotate(yaw, c[1], c[2], 0)
-		local wx, wy, wz = relief.rotate({ q.x, q.y, q.z, q.w }, c[1], c[2], 0)
+		local wx, wy, wz = relief.rotate({ q.x, q.y, q.z, q.w }, c[1] * stretch.x, c[2] * stretch.y, 0)
 		out[#out + 1] = { flat_x = px + fx, flat_y = py + fy, x = pos.x + wx, y = pos.y + wy, z = pos.z + wz }
 	end
 	return out
@@ -178,23 +178,54 @@ test("relief: every corner of every piece lies on the ground it is given, so nei
 		{ x = 9, y = 6, rot = 1, size_x = 3, size_y = 1 },
 		{ x = 6, y = 10, rot = 2, size_x = 2, size_y = 1 },
 	}
-	local built = 0
+	-- Pieces sloping one way meet exactly. One sloping both ways covers its cells with a little to
+	-- spare: every flat corner of its cells lies inside what the piece covers. (Before the stretch:
+	-- 6 cm slits along the borders, seen in game.)
+	local function inside(px, py, q)
+		-- q: corners in the order 00, 10, 01, 11; the quad runs 00, 10, 11, 01.
+		local ring = { q[1], q[2], q[4], q[3] }
+		local sign = 0
+		for i = 1, 4 do
+			local a, b = ring[i], ring[i % 4 + 1]
+			local cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
+			if math.abs(cross) > 1e-9 then
+				local s = cross > 0 and 1 or -1
+				if sign ~= 0 and s ~= sign then return false end
+				sign = s
+			end
+		end
+		return true
+	end
+	local built, worst, spare = 0, 0, 0
 	for seed = 1, 30 do
 		local entries = fake_entries(14, 12, wide)
-		local r = relief.build(entries, { 0, 0, 13, 11 }, rng.new(seed, "relief"), { height = 8, step = 1.25, rough = 0.7 })
+		local r = relief.build(entries, { 0, 0, 13, 11 }, rng.new(seed, "relief"), { height = 14, step = 2, rough = 0.7 })
 		if r then
 			built = built + 1
-			yes(r.top <= 8.001 and r.top > 0, "within the height asked")
+			yes(r.top <= 14.001 and r.top > 0, "within the height asked")
 			for _, e in ipairs(entries) do
-				for _, c in ipairs(corners(e, r)) do
-					near(c.z, r.height(c.flat_x, c.flat_y), 0.05, "corner height")
-					near(c.x, c.flat_x, 0.12, "corner x")
-					near(c.y, c.flat_y, 0.12, "corner y")
+				local _, _, stretch = r.place(e)
+				local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot, e.size_x, e.size_y)
+				local mx, my = (x0 + x1 + 1) * 12, (y0 + y1 + 1) * 12
+				local a, b = r.slope(mx, my)
+				local cs = corners(e, r)
+				for _, c in ipairs(cs) do
+					-- On the ground's own plane, wherever the corner reaches.
+					near(c.z, r.height(mx, my) + a * (c.x - mx) + b * (c.y - my), 0.002, "corner on the plane")
+					if a == 0 or b == 0 then
+						near(c.x, c.flat_x, 0.002, "corner x, one slope")
+						near(c.y, c.flat_y, 0.002, "corner y, one slope")
+					else
+						worst = math.max(worst, math.abs(c.x - c.flat_x), math.abs(c.y - c.flat_y))
+					end
+					yes(inside(c.flat_x, c.flat_y, cs), "the cells' corner is covered by " .. e.x .. "," .. e.y)
 				end
+				yes(stretch.x > 0.999999 and stretch.x < 1.02 and stretch.y > 0.999999 and stretch.y < 1.02, "a stretch of under 2%: " .. stretch.x .. " " .. stretch.y)
 			end
 		end
 	end
 	yes(built >= 25, "most seeds give relief")
+	yes(worst < 0.3, "a piece sloping both ways reaches past its cells by under 30 cm: " .. worst)
 end)
 
 test("relief: flat when asked for none, and never below 0", function()

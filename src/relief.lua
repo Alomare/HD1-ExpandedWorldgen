@@ -22,27 +22,36 @@ local function locked_borders(spans)
 	return locked
 end
 
--- One profile: heights at every cell border from c0 to c1 + 1, starting at 0.
--- step: the most a cell rises (metres); top: the most the profile climbs; rough: how often a run
--- slopes (0 to 1).
+-- One profile: heights at every cell border from c0 to c1 + 1.
+-- step: the most a cell rises (metres); top: how high the profile climbs; rough (0 to 1): the share
+-- of runs that follow the hills, the others stay level (plateaus).
+-- The profile follows one or two hills placed along the span, each reaching top, as closely as the
+-- step and the locked borders allow. (A random walk, as before, seldom got past half of top.)
 local function profile(c0, c1, locked, rng, step, top, rough)
-	local at, h = { [c0] = 0 }, 0
-	local dir = rng:chance(0.5) and 1 or -1
+	local n = c1 - c0 + 1
+	local hills = rng:chance(0.5) and 1 or 2
+	local peaks = {}
+	for i = 1, hills do peaks[i] = c0 + (i - 1 + 0.2 + 0.6 * rng:float()) * n / hills end
+	local width = n / hills * 0.45
+	local function target(k)
+		local t = 0
+		for i = 1, hills do
+			local d = (k - peaks[i]) / width
+			t = math.max(t, math.exp(-d * d))
+		end
+		return top * t
+	end
+	local h = target(c0)
+	local at = { [c0] = h }
 	local c = c0
 	while c <= c1 do
 		local e = c
 		while e < c1 and locked[e + 1] do e = e + 1 end
 		local cells = e - c + 1
+		local follow = rng:chance(0.35 + 0.65 * rough)
 		local slope = 0
-		if rng:chance(rough) then
-			if not rng:chance(0.65) then dir = -dir end
-			slope = step * (rng:chance(0.5) and 1 or 0.5) * dir
-			local rise = slope * cells
-			-- Keep the profile between 0 and top: turn round, and stay level if that won't fit either.
-			if h + rise > top or h + rise < 0 then
-				dir, slope, rise = -dir, -slope, -rise
-				if h + rise > top or h + rise < 0 then slope = 0 end
-			end
+		if follow then
+			slope = math.max(-step, math.min(step, (target(e + 1) - h) / cells))
 		end
 		for k = c, e do
 			h = h + slope
@@ -82,8 +91,11 @@ function M.build(entries, box, rng, opts)
 		if x1 > x0 then xs[#xs + 1] = { x0, x1 } end
 		if y1 > y0 then ys[#ys + 1] = { y0, y1 } end
 	end
-	local fx = profile(box[1], box[3], locked_borders(xs), rng:fork("x"), step, total / 2, rough)
-	local fy = profile(box[2], box[4], locked_borders(ys), rng:fork("y"), step, total / 2, rough)
+	-- Each axis may climb to three quarters of the height, so the two together reach it where their
+	-- hills meet; the sum is then scaled down to the height where it goes over. Scaling both keeps
+	-- every piece one plane and only makes slopes gentler.
+	local fx = profile(box[1], box[3], locked_borders(xs), rng:fork("x"), step, total * 0.75, rough)
+	local fy = profile(box[2], box[4], locked_borders(ys), rng:fork("y"), step, total * 0.75, rough)
 
 	-- Lowest ground at 0.
 	local low, high = math.huge, -math.huge
@@ -92,8 +104,10 @@ function M.build(entries, box, rng, opts)
 	for k = box[2], box[4] + 1 do ly, hy = math.min(ly, fy[k]), math.max(hy, fy[k]) end
 	low, high = lx + ly, hx + hy
 	if high - low < 0.01 then return nil end
-	for k = box[1], box[3] + 1 do fx[k] = fx[k] - lx end
-	for k = box[2], box[4] + 1 do fy[k] = fy[k] - ly end
+	local scale = math.min(1, total / (high - low))
+	for k = box[1], box[3] + 1 do fx[k] = (fx[k] - lx) * scale end
+	for k = box[2], box[4] + 1 do fy[k] = (fy[k] - ly) * scale end
+	low, high = 0, (high - low) * scale
 
 	local R = { top = high - low, box = box, fx = fx, fy = fy }
 
@@ -109,26 +123,39 @@ function M.build(entries, box, rng, opts)
 	end
 
 	-- Where a piece goes: the position and rotation its level is loaded with, as plain numbers
-	-- ({ x, y, z } and { x, y, z, w }). The piece turns about its own middle, so the little it
-	-- shrinks across (the cosine of the tilt) is shared by both borders.
+	-- ({ x, y, z } and { x, y, z, w }), and the stretch ({ x, y }, along the piece's own axes) its
+	-- ground takes about the level's origin. A tilted piece covers a little less ground across (the
+	-- cosine of the tilt), which opened slits at its borders that showed the dark below (seen in
+	-- game). Its ground is stretched by the inverse, about the middle of the piece, so a piece that
+	-- slopes one way meets its neighbours exactly. One that slopes both ways is a rectangle where the
+	-- ground is a parallelogram, which no turn and stretch can match: where the slope changes at a
+	-- border that leaves a wedge of up to 24 |a b| metres, so such a piece reaches past each border
+	-- by half of that (each neighbour covers its own half) and a centimetre.
 	function R.place(e)
 		local rot = e.rot or 0
 		local x0, y0, x1, y1 = grid.span(e.x, e.y, rot, e.size_x or 1, e.size_y or 1)
 		local cx, cy = (x0 + x1 + 1) * TILE / 2, (y0 + y1 + 1) * TILE / 2
 		local a, b = R.slope(cx, cy)
-		-- The game's own spot for the piece: the corner its rotation turns about.
-		local px, py = TILE * e.x, TILE * e.y
-		if rot == 1 or rot == 2 then px = px + TILE end
-		if rot == 2 or rot == 3 then py = py + TILE end
+		-- The level's footprint runs from its origin over (size_x, size_y) tiles of its own axes; the
+		-- game turns it about the corner that keeps it on its cells, so its middle is the cells' middle.
 		local yaw = M.axis_angle(0, 0, 1, rot * math.pi * 0.5)
 		local len = math.sqrt(a * a + b * b + 1)
 		local nx, ny, nz = -a / len, -b / len, 1 / len
 		local tilt = { 0, 0, 0, 1 }
 		local axis = math.sqrt(nx * nx + ny * ny)
 		if axis > 1e-9 then tilt = M.axis_angle(-ny / axis, nx / axis, 0, math.acos(nz)) end
-		local ox, oy, oz = M.rotate(tilt, px - cx, py - cy, 0)
 		local q = M.multiply(tilt, yaw)
-		return { x = cx + ox, y = cy + oy, z = R.height(cx, cy) + oz }, { x = q[1], y = q[2], z = q[3], w = q[4] }
+		local w, h = (e.size_x or 1) * TILE, (e.size_y or 1) * TILE
+		local ux, uy = M.rotate(q, 1, 0, 0)
+		local vx, vy = M.rotate(q, 0, 1, 0)
+		local sx, sy = 1 / math.sqrt(ux * ux + uy * uy), 1 / math.sqrt(vx * vx + vy * vy)
+		if a ~= 0 and b ~= 0 then
+			local reach = math.max(w, h) / 2 * math.abs(a * b) + 0.01
+			sx, sy = sx * (1 + 2 * reach / w), sy * (1 + 2 * reach / h)
+		end
+		-- The level's origin, so that the middle of the stretched piece sits on the middle of its cells.
+		local ox, oy, oz = M.rotate(q, w / 2 * sx, h / 2 * sy, 0)
+		return { x = cx - ox, y = cy - oy, z = R.height(cx, cy) - oz }, { x = q[1], y = q[2], z = q[3], w = q[4] }, { x = sx, y = sy }
 	end
 
 	return R

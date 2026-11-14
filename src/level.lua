@@ -412,7 +412,7 @@ local function finish(self, wg, dx, dy)
 		wg.relief = relief_lib.build(self.spawn_list, { x0, y0, x1, y1 }, wg.rng:fork("relief"), p.relief)
 		if wg.relief then
 			for _, e in ipairs(self.spawn_list) do
-				e.wg_pos, e.wg_quat = wg.relief.place(e)
+				e.wg_pos, e.wg_quat, e.wg_stretch = wg.relief.place(e)
 			end
 		end
 	end
@@ -473,6 +473,31 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 
+	-- The ground of a tilted piece, stretched so its borders reach its neighbours' (relief.place).
+	-- The ground meshes are the units at the level's origin; the rest keep their size.
+	local Unit = G("Unit")
+	if wg.relief and Unit and Unit.set_local_scale and Level.units then
+		local stretched = 0
+		local ok, err = pcall(function()
+			for _, e in ipairs(list) do
+				local s = e.wg_stretch
+				if e.level and s and (math.abs(s.x - 1) > 1e-6 or math.abs(s.y - 1) > 1e-6) then
+					for _, u in ipairs(Level.units(e.level)) do
+						local p = Unit.local_position(u, 0)
+						local dx, dy, dz = p.x - e.wg_pos.x, p.y - e.wg_pos.y, p.z - e.wg_pos.z
+						if dx * dx + dy * dy + dz * dz < 0.0025 then
+							local k = Unit.local_scale(u, 0)
+							Unit.set_local_scale(u, 0, Vector3(k.x * s.x, k.y * s.y, k.z))
+							stretched = stretched + 1
+						end
+					end
+				end
+			end
+		end)
+		if not ok then M.log("stretching the ground failed: " .. tostring(err)) end
+		wg.stretched = stretched
+	end
+
 	wg.units = {}
 	if wg.props and #wg.props > 0 then
 		local World = G("World")
@@ -484,8 +509,8 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 	M.active = self
-	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m"):format(#list, #wg.units,
-		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0))
+	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d ground units stretched"):format(#list, #wg.units,
+		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.stretched or 0))
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -752,6 +777,41 @@ function M.install(hook)
 		self.waypoints_cache = {}
 		return original(self, ...)
 	end)
+
+	-- Relief: SpawnManager casts a ray down from 100 m and takes the hit only between -0.5 and 1 m (a
+	-- group spawn point between -0.2 and 1 m), the height of flat ground. On raised ground every try
+	-- fails, and the players never drop. While a spawn's ray reports, the hit is given from the
+	-- terrain's height, and what the game boxes in that moment (the spawn position) is put back up.
+	local function on_ground(original, self, ...)
+		local wg = M.active and M.active.wg
+		local physics = G("PhysicsWorld")
+		if not (wg and wg.relief and physics and physics.make_raycast) then return original(self, ...) end
+		local make = physics.make_raycast
+		physics.make_raycast = function(world, callback, ...)
+			local function report(hit, pos, ...)
+				local h = hit and pos and wg.relief and wg.relief.height(pos.x, pos.y) or 0
+				if h == 0 then return callback(hit, pos, ...) end
+				local aux = G("Vector3Aux")
+				local box = aux.box
+				aux.box = function(t, v, ...)
+					local r = box(t, v, ...)
+					if type(r) == "table" and r.z then r.z = r.z + h end
+					return r
+				end
+				local res = { pcall(callback, hit, G("Vector3")(pos.x, pos.y, pos.z - h), ...) }
+				aux.box = box
+				if not res[1] then error(res[2], 0) end
+				return unpack(res, 2)
+			end
+			return make(world, report, ...)
+		end
+		local res = { pcall(original, self, ...) }
+		physics.make_raycast = make
+		if not res[1] then error(res[2], 0) end
+		return unpack(res, 2)
+	end
+	hook("SpawnManager", "queue_spawn", on_ground)
+	hook("SpawnManager", "queue_group_spawn", on_ground)
 
 	-- Relief: what the game spawns below the ground is lifted to it. `get_closest_position_on_level`
 	-- stays the game's: the camera calls it each frame from a point at z 0 and moves by the

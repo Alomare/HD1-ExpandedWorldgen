@@ -215,19 +215,24 @@ end)
 
 test("relief: pieces are lifted and tilted, wide ones as one plane, and the edge is single pieces", function()
 	with_profile({ id = "hills", size = 1.5, relief = { height = 10, rough = 0.8 } })
-	local lifted = 0
+	local lifted, tops = 0, {}
 	for i, env in ipairs(ENVS) do
 		local l = game.build(game.seed(20 + i, env, "bugs", 8), true)
 		check_map(l, "hills " .. env)
 		no_failures()
 		if l.wg.relief then
 			yes(l.wg.relief.top <= 10.001)
+			tops[#tops + 1] = l.wg.relief.top
 			for n, e in ipairs(l.spawn_list) do
 				if e.is_edge then eq(e.size_x * e.size_y, 1, "edge piece of one cell") end
 				local loaded = game.levels[n]
 				eq(loaded.pos.z, e.wg_pos.z)
 				eq(loaded.rot.w, e.wg_quat.w)
 				eq(loaded.data.pos.z, e.wg_pos.z)
+				-- The ground mesh takes the stretch that closes the borders, the rest keep their size.
+				near(loaded.units[1].scale.x, e.wg_stretch.x, 1e-9, "ground stretched along x")
+				near(loaded.units[1].scale.y, e.wg_stretch.y, 1e-9, "ground stretched along y")
+				eq(loaded.units[2].scale.x, 1, "a prop keeps its size")
 				if e.wg_pos.z > 0.5 then lifted = lifted + 1 end
 				-- The middle of the piece sits on the ground.
 				local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot, e.size_x, e.size_y)
@@ -250,6 +255,55 @@ test("relief: pieces are lifted and tilted, wide ones as one plane, and the edge
 		end
 	end
 	yes(lifted > 50, "ground above 0: " .. lifted)
+	-- The height asked for is reached, or nearly: in game an 8 m profile once peaked at 3.1 m.
+	local sum = 0
+	for _, t in ipairs(tops) do sum = sum + t end
+	yes(#tops == #ENVS and sum / #tops >= 7, "average highest ground of 10 m asked: " .. sum / math.max(1, #tops))
+end)
+
+-- SpawnManager takes a ray hit only at the height of flat ground (-0.5 to 1 m for a spawn), so on
+-- raised ground the players never dropped and the screen stayed black. A stand-in with the game's
+-- check, hooked as the mod hooks the real one.
+test("relief: spawns are found on raised ground and land on it", function()
+	with_profile({ id = "hills", size = 1.5, relief = { height = 10, rough = 0.8 } })
+	local l = game.build(game.seed(31, "desert", "bugs", 8), false)
+	level.active = l
+	local x, y, top = 0, 0, 0
+	for _, e in ipairs(l.spawn_list) do
+		local h = l.wg.relief.height(e.x * 24 + 12, e.y * 24 + 12)
+		if h > top then x, y, top = e.x * 24 + 12, e.y * 24 + 12, h end
+	end
+	yes(top > 1.5, "a spot well above the game's window: " .. top)
+	local saved = { rawget(_G, "SpawnManager"), rawget(_G, "PhysicsWorld") }
+	local rays = {}
+	_G.PhysicsWorld = { make_raycast = function(_, callback) rays[#rays + 1] = callback; return {} end }
+	_G.SpawnManager = { queue_spawn = function(self, path, pos)
+		local entry = { path = path }
+		self.queued[#self.queued + 1] = entry
+		PhysicsWorld.make_raycast(nil, function(hit, p)
+			if hit and p.z > -0.5 and p.z <= 1 then entry.position = Vector3Aux.box({}, p) else entry.failed = true end
+		end, "closest")
+	end }
+	level.install(function(target, method, fn)
+		if target ~= "SpawnManager" then return end
+		local original = SpawnManager[method]
+		if original then SpawnManager[method] = function(...) return fn(original, ...) end end
+	end)
+	local manager = setmetatable({ queued = {} }, { __index = SpawnManager })
+	manager:queue_spawn("player", Vector3(x, y, 0))
+	eq(#rays, 1)
+	rays[1](true, Vector3(x, y, top))
+	local entry = manager.queued[1]
+	eq(entry.failed, nil, "the hit on raised ground counts")
+	near(entry.position.z, top, 1e-6, "and the spawn stands on it")
+	eq(Vector3Aux.box({}, Vector3(1, 2, 3)).z, 3, "box is the game's again afterwards")
+	-- A map without relief leaves the game's check as it was.
+	l.wg.relief = nil
+	manager:queue_spawn("player", Vector3(x, y, 0))
+	rays[2](true, Vector3(x, y, top))
+	eq(manager.queued[2].failed, true)
+	_G.SpawnManager, _G.PhysicsWorld = saved[1], saved[2]
+	level.active = nil
 end)
 
 test("the map texture: a wide map is drawn smaller and stays inside the texture", function()

@@ -162,6 +162,9 @@ function M.install()
 	_G.Unit = {
 		camera = function() return {} end,
 		set_unit_visibility = function(u, shown) u.shown = shown end,
+		local_position = function(u) return u.pos end,
+		local_scale = function(u) return u.scale end,
+		set_local_scale = function(u, _, s) u.scale = s end,
 	}
 	_G.Gui = { bitmap_3d = function(gui, name, turn, _, _, size)
 		M.bitmaps[#M.bitmaps + 1] = { gui = gui, name = name, pos = turn.pos, size = size }
@@ -187,7 +190,10 @@ function M.world_proxy()
 	function class:get_world() return {} end
 	function class:viewport() return viewport end
 	function class:load_level_with_object_sets(name, path, _, sets, _, pos, rot)
-		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { { shown = true } } }
+		-- A ground mesh at the level's origin and a prop elsewhere, as the game's pieces have them.
+		local ground = { shown = true, ground = true, pos = vec(pos.x, pos.y, pos.z), scale = vec(1, 1, 1) }
+		local prop = { shown = true, pos = vec(pos.x + 5, pos.y + 7, pos.z), scale = vec(1, 1, 1) }
+		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { ground, prop } }
 		M.levels[#M.levels + 1] = level
 		return level
 	end
