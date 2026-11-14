@@ -306,6 +306,54 @@ test("relief: spawns are found on raised ground and land on it", function()
 	level.active = nil
 end)
 
+-- An enemy's mover takes ground only below 2 m and at most 0.75 m above its feet; on raised ground
+-- it answered 0 and enemies walked 2 to 3 m under the ground (seen in game). A stand-in with the
+-- game's numbers, hooked as the mod hooks the real one.
+test("relief: enemies walk on raised ground, not under it", function()
+	with_profile({ id = "hills", size = 1.5, relief = { height = 10, rough = 0.8 } })
+	local l = game.build(game.seed(32, "forest", "bugs", 8), false)
+	level.active = l
+	local rel = l.wg.relief
+	local x, y, top = 0, 0, 0
+	for _, e in ipairs(l.spawn_list) do
+		local h = rel.height(e.x * 24 + 12, e.y * 24 + 12)
+		if h > top then x, y, top = e.x * 24 + 12, e.y * 24 + 12, h end
+	end
+	yes(top > 3, "ground well above the mover's 2 m: " .. top)
+	local saved = { rawget(_G, "NavMeshMoverComponent"), rawget(_G, "PhysicsWorld") }
+	-- The real ground: a ray down hits the terrain.
+	_G.PhysicsWorld = { immediate_raycast = function(_, from) return true, Vector3(from.x, from.y, rel.height(from.x, from.y)), 3, Vector3(0, 0, 1), {} end }
+	_G.NavMeshMoverComponent = { move_to_ground = function(self, pos)
+		local hit, p = PhysicsWorld.immediate_raycast(nil, Vector3(pos.x, pos.y, pos.z + 3), Vector3(0, 0, -1), 100)
+		local z
+		if hit then
+			local d = p.z - pos.z
+			if d < -0.75 * 0.5 then
+				z = pos.z
+			elseif d < 0.75 and p.z < 2 then
+				z = p.z
+			end
+		end
+		return z or 0
+	end }
+	level.install(function(target, method, fn)
+		if target ~= "NavMeshMoverComponent" then return end
+		local original = NavMeshMoverComponent[method]
+		if original then NavMeshMoverComponent[method] = function(...) return fn(original, ...) end end
+	end)
+	local mover = setmetatable({}, { __index = NavMeshMoverComponent })
+	-- Standing on the ground, and a step along it.
+	near(mover:move_to_ground(Vector3(x, y, top)), top, 1e-6, "stays on the ground")
+	near(mover:move_to_ground(Vector3(x + 0.3, y + 0.3, top)), rel.height(x + 0.3, y + 0.3), 1e-6, "follows it")
+	local cast = PhysicsWorld.immediate_raycast
+	-- Without relief the game's own rule: no ground above 2 m.
+	l.wg.relief = nil
+	eq(mover:move_to_ground(Vector3(x, y, top)), 0)
+	eq(PhysicsWorld.immediate_raycast, cast, "the ray is the game's again")
+	_G.NavMeshMoverComponent, _G.PhysicsWorld = saved[1], saved[2]
+	level.active = nil
+end)
+
 test("the map texture: a wide map is drawn smaller and stays inside the texture", function()
 	with_profile({ id = "wide", size = 8, shape = "rectangle", shape_opts = { aspect = 4 } })
 	local l = game.build(game.seed(2, "desert", "bugs", 12), false)

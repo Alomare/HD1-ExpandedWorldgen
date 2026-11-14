@@ -813,6 +813,34 @@ function M.install(hook)
 	hook("SpawnManager", "queue_spawn", on_ground)
 	hook("SpawnManager", "queue_group_spawn", on_ground)
 
+	-- Relief: an enemy's mover finds its height with a ray from 3 m above it, and takes ground only
+	-- below 2 m and at most 0.75 m above its feet; on anything higher it may not move and its height
+	-- becomes 0, under raised ground (seen in game: enemies 2 to 3 m under it). While it looks, the
+	-- ray starts from the raised ground and everything is told from the terrain's height, which is
+	-- added back to the height it answers.
+	hook("NavMeshMoverComponent", "move_to_ground", function(original, self, pos, ...)
+		local wg = M.active and M.active.wg
+		local physics = G("PhysicsWorld")
+		local Vector3 = G("Vector3")
+		if not (wg and wg.relief and pos and physics and physics.immediate_raycast and Vector3) then return original(self, pos, ...) end
+		local h = wg.relief.height(pos.x, pos.y)
+		if h == 0 then return original(self, pos, ...) end
+		local cast = physics.immediate_raycast
+		local function pack(...) return { n = select("#", ...), ... } end
+		physics.immediate_raycast = function(world, from, ...)
+			local lift = wg.relief.height(from.x, from.y)
+			local r = pack(cast(world, Vector3(from.x, from.y, from.z + lift), ...))
+			if r[1] and r[2] then r[2] = Vector3(r[2].x, r[2].y, r[2].z - lift) end
+			return unpack(r, 1, r.n)
+		end
+		local res = { pcall(original, self, Vector3(pos.x, pos.y, pos.z - h), ...) }
+		physics.immediate_raycast = cast
+		if not res[1] then error(res[2], 0) end
+		local z = res[2]
+		if type(z) == "number" then z = z + h end
+		return z, unpack(res, 3)
+	end)
+
 	-- Relief: what the game spawns below the ground is lifted to it. `get_closest_position_on_level`
 	-- stays the game's: the camera calls it each frame from a point at z 0 and moves by the
 	-- difference, so a lifted answer makes the camera climb without end.
