@@ -72,6 +72,7 @@ A piece in `remix` is a table as in the `EnvironmentSettings` of the game: `name
 
 - Planet missions only. Boss missions, Retaliatory Strikes and Proving Grounds keep the maps of the game.
 - A map is 40 tiles across at most, edge included (960 metres). The game sends positions as 16 bits over 1000 metres each way.
+- A world holds at most 65536 units. A map is planned no larger than its pieces fit in 38000 units, from the units the pieces of each biome hold, so the largest maps of lava and desert planets come out smaller than the size asked; backdrop rows stop where the world would pass 45000.
 - Terrain height is the sum of one profile along each axis, because the game lays flat pieces that can be lifted and tilted but not bent. The collision of a tilted piece is slightly shorter across than what is drawn, which leaves slits of a few centimetres in it along the borders of steep pieces.
 - Only one lighting setup and one sound environment per map, those of the planet.
 - A prop unit must be named, and in a loaded package. Spawning a unit from a package that is not loaded, or by a hashed name, stops the game.

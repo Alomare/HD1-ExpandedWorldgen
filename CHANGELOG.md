@@ -2,6 +2,12 @@
 
 New, changed, fixed or removed features, one line each, brief and direct. The section for a release becomes the release notes.
 
+## 0.3.0
+
+- Fixed: the largest maps with land beyond the edge hung, went black or crashed the game as the mission started, past the 65536 units the game holds in a world.
+- Changed: a map is planned no larger than the game can load, so the largest maps of lava and desert planets come out somewhat smaller than the size asked.
+- Changed: rows of land beyond the edge stop where the map would load too much.
+
 ## 0.2.0
 
 - Changed: terrain height makes hills and valleys a few hundred metres apart across the whole map, where most maps had one long, gentle tilt.
