@@ -2,6 +2,11 @@
 
 New, changed, fixed or removed features, one line each, brief and direct. The section for a release becomes the release notes.
 
+## 0.2.0
+
+- Changed: terrain height makes hills and valleys a few hundred metres apart across the whole map, where most maps had one long, gentle tilt.
+- Changed: special set pieces keep to strips between the lines where the ground bends, so a map keeps room for slopes.
+
 ## 0.1.0
 
 - New: rules that give each planet mission a map profile, the same on every machine.
