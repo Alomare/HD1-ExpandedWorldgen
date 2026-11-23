@@ -49,7 +49,7 @@ Every field is optional. Numbers outside the limits are brought inside them.
 | `biomes` | Biomes besides the one of the planet: `"desert"`, `"forest"`, `"snow"`, `"lava"`, `"city"`, `"any"`, or `{ env = "snow", weight = 2 }`. Up to three more |
 | `own_weight` | The share of the biome of the planet, 1 by default |
 | `layout` | How biomes share the map: `"split"`, `"bands"`, `"patches"`, `"core"`, `"any"` |
-| `relief` | Terrain height in metres, or `{ height, step, rough }`: the range from lowest to highest ground (up to 40), the most one tile rises (up to 2), and how often the ground slopes (0 to 1) |
+| `relief` | Terrain height in metres, or `{ height, step, rough }`: the range from lowest to highest ground (up to 40), the most one tile rises (up to 5), and how often the ground slopes (0 to 1) |
 | `objectives` | `{ scale, max, max_unique, filter }`: a multiplier for the objective budget, the caps (6 and 10 in the game), and `filter(piece, mission)` answering whether an objective piece may be used |
 | `open` | `true` leaves out the set pieces, for open ground |
 | `remix` | `function(lists, biome, mission)` edits the piece lists of this one level: `mission`, `unique`, `rare`, `special`, `children`, `common`, `extract`, `droppoint`, `edge_straight`, `edge_fill`, `edge_concave`, `edge_convex` |
@@ -72,9 +72,9 @@ A piece in `remix` is a table as in the `EnvironmentSettings` of the game: `name
 
 - Planet missions only. Boss missions, Retaliatory Strikes and Proving Grounds keep the maps of the game.
 - A map is 40 tiles across at most, edge included (960 metres). The game sends positions as 16 bits over 1000 metres each way.
-- Terrain height is the sum of one profile along each axis, because the game lays flat pieces that can be lifted and tilted but not bent. A tilted piece is slightly shorter across, which leaves a slit of a few centimetres at the borders of steep pieces.
+- Terrain height is the sum of one profile along each axis, because the game lays flat pieces that can be lifted and tilted but not bent. The collision of a tilted piece is slightly shorter across than what is drawn, which leaves slits of a few centimetres in it along the borders of steep pieces.
 - Only one lighting setup and one sound environment per map, those of the planet.
-- A prop unit must be in a loaded package. Spawning a unit from a package that is not loaded stops the game.
+- A prop unit must be named, and in a loaded package. Spawning a unit from a package that is not loaded, or by a hashed name, stops the game.
 - A set piece that finds no room in 100 tries is left out, as in the game. Small parts of a map with several biomes lose more of them.
 
 ## Tests
