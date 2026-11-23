@@ -465,6 +465,36 @@ test("backdrop: rings outside the edge, off the map and off the playable ground;
 	yes(shown > 0, "near props shown again")
 end)
 
+-- The engine holds at most 65536 units in a world; a Vast map with four rings of backdrop reached
+-- about 64600 and the game hung or crashed as the player's gear spawned (seen in game).
+test("unit budget: the backdrop stops where the world would pass it, every piece of the map loads", function()
+	local budget, step = level.UNIT_BUDGET, level.UNIT_STEP
+	yes(budget + step * 2 <= 50000, "room under the engine's 65536 for what a mission spawns")
+	with_profile({ id = "wide", size = 4, shape = "ring", backdrop = 4, relief = { height = 30, step = 4 } })
+	local seed = game.seed(5, "desert", "bugs", 12)
+	local whole = game.build(seed, true)
+	local all, rings = 0, 0
+	for _, e in ipairs(whole.spawn_list) do
+		all = all + 1
+		if e.wg_backdrop then rings = rings + 1 end
+	end
+	-- Each fake level holds 2 units: a budget of the map's units and 20 backdrop pieces' worth.
+	level.UNIT_BUDGET, level.UNIT_STEP = (all - rings + 20) * 2, 2
+	local l = game.build(seed, true)
+	level.UNIT_BUDGET, level.UNIT_STEP = budget, step
+	check_map(l, "wide")
+	no_failures()
+	local kept = 0
+	for _, e in ipairs(l.spawn_list) do
+		yes(e.level, "every piece left in the list is loaded: " .. e.level_name)
+		if e.wg_backdrop then kept = kept + 1 end
+	end
+	eq(#l.spawn_list - kept, all - rings, "every piece of the map loads")
+	yes(kept >= 18 and kept <= 20, "the backdrop stops at the budget: " .. kept .. " of " .. rings)
+	eq(l.wg.cut, rings - kept)
+	yes(l.wg.world_units <= (all - rings + 20) * 2, "the world within the budget: " .. l.wg.world_units)
+end)
+
 test("objectives: the budget scales, a filter narrows the kinds, and an empty filter is ignored", function()
 	local seed = game.seed(6, "desert", "bugs", 6)
 	level.rules = {}

@@ -23,7 +23,16 @@ local profiles = obsidian.module("src/profile")
 local props_lib = obsidian.module("src/props")
 
 local M = { rules = {}, active = nil, log = function() end }
-M.SLIT = 0.5 -- metres from a cell border where a ground ray may fall through a slit between tilted pieces
+M.NO_BACKDROP_SHEAR = false -- experiment
+function M.dbg(k) local t = rawget(_G, "WG_DEBUG") return type(t) == "table" and t[k] end
+-- The engine holds at most 65536 units in a world: a Vast map with four rings of backdrop reached
+-- about 64600 once loaded, and the game hung or crashed as the player's gear spawned (seen in game,
+-- 2026-11-23). The pieces of the map always load; the backdrop stops where the world would pass
+-- the budget, which leaves room for what a mission spawns. UNIT_STEP: the most units one backdrop
+-- piece was seen to hold, so the next one never takes the world past the budget.
+M.UNIT_BUDGET = 45000
+M.UNIT_STEP = 150
+M.SLIT = 0.5-- metres from a cell border where a ground ray may fall through a slit between tilted pieces
 M.NUDGE = { { 0.6, 0 }, { -0.6, 0 }, { 0, 0.6 }, { 0, -0.6 } } -- where such a ray is cast again
 
 local key, unkey = grid.key, grid.unkey
@@ -444,7 +453,7 @@ local function finish(self, wg, dx, dy)
 		wg.relief = relief_lib.build(self.spawn_list, { x0, y0, x1, y1 }, wg.rng:fork("relief"), p.relief)
 		if wg.relief then
 			for _, e in ipairs(self.spawn_list) do
-				e.wg_pos, e.wg_quat, e.wg_shear = wg.relief.place(e)
+				if not (M.dbg("flat_backdrop") and e.wg_backdrop) and not M.dbg("flat_all") then e.wg_pos, e.wg_quat, e.wg_shear = wg.relief.place(e) end
 			end
 		end
 	end
@@ -470,6 +479,14 @@ local function spawn(self, wg, original, spawner, register, ...)
 	local names0 = resource.object_set_names
 	local load0 = proxy.load_level_with_object_sets
 	local had = rawget(proxy, "load_level_with_object_sets")
+	-- Units in the world before the pieces load.
+	local units = 0
+	do
+		local World = G("World")
+		local got, n = pcall(function() return #World.units(proxy:get_world()) end)
+		if got and n then units = n end
+	end
+	wg.cut = 0
 
 	resource.object_set_names = function(path, ...)
 		at = at + 1
@@ -487,6 +504,20 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 		local level = load0(this, name, path, flag, sets, extra, pos, rot, ...)
 		if e then e.wg_path = path end
+		-- The unit budget: the backdrop, which only looks, is cut short where the world would get too
+		-- close to the engine's limit (see M.UNIT_BUDGET). The game walks the list with ipairs, so
+		-- what is cut is never loaded.
+		local got, n = pcall(function() return #Level.units(level) end)
+		units = units + (got and n or 0)
+		local nxt = list[at + 1]
+		if nxt and nxt.wg_backdrop and units + M.UNIT_STEP > M.UNIT_BUDGET then
+			for k = #list, at + 1, -1 do
+				if list[k].wg_backdrop then
+					table.remove(list, k)
+					wg.cut = (wg.cut or 0) + 1
+				end
+			end
+		end
 		return level
 	end
 	local ok, err = pcall(original, self, spawner, register, ...)
@@ -513,7 +544,7 @@ local function spawn(self, wg, original, spawner, register, ...)
 		local ok, err = pcall(function()
 			for _, e in ipairs(list) do
 				local sh = e.wg_shear
-				if e.level and sh then
+				if e.level and sh and not (M.NO_BACKDROP_SHEAR and e.wg_backdrop) then
 					for _, u in ipairs(Level.units(e.level)) do
 						local m = Unit.local_pose(u, 0)
 						local t = M4.translation(m)
@@ -540,8 +571,9 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 	M.active = self
-	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared"):format(#list, #wg.units,
-		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.sheared or 0))
+	wg.world_units = units
+	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared, %d units in the world, %d backdrop pieces left out"):format(#list, #wg.units,
+		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.sheared or 0, units, wg.cut or 0))
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -621,7 +653,7 @@ end
 
 -- The height of the ground at a world position in the mission being played: 0 on a flat map.
 function M.height(x, y)
-	local wg = M.active and M.active.wg
+	local wg = not M.dbg("no_hooks") and M.active and M.active.wg
 	if wg and wg.relief then return wg.relief.height(x, y) end
 	return 0
 end
@@ -680,7 +712,7 @@ function M.install(hook)
 			-- ground may change slope (relief.strips); unique and rare ones are placed one by one
 			-- and keep the whole ground.
 			local strips = nil
-			if step == "special" and wg.profile.relief then
+			if step == "special" and wg.profile.relief and not M.dbg("no_strips") then
 				local ok, got = pcall(relief_lib.strips, self.spawn_list, self.area_map, wg.rng:fork("strips"))
 				if ok then strips = got else M.log("relief strips failed: " .. tostring(got)) end
 				wg.strips = strips
@@ -705,7 +737,7 @@ function M.install(hook)
 		local from = #self.spawn_list
 		local straight = self.environment.edge_straight
 		-- Long edge pieces would tie the relief's profiles down all round the map.
-		if wg.profile.relief then self.environment.edge_straight = {} end
+		if wg.profile.relief and not M.dbg("keep_straight") then self.environment.edge_straight = {} end
 		local ok, err = pcall(original, self, ...)
 		self.environment.edge_straight = straight
 		if not ok then error(err, 0) end
@@ -823,7 +855,7 @@ function M.install(hook)
 	-- fails, and the players never drop. While a spawn's ray reports, the hit is given from the
 	-- terrain's height, and what the game boxes in that moment (the spawn position) is put back up.
 	local function on_ground(original, self, ...)
-		local wg = M.active and M.active.wg
+		local wg = not M.dbg("no_hooks") and M.active and M.active.wg
 		local physics = G("PhysicsWorld")
 		if not (wg and wg.relief and physics and physics.make_raycast) then return original(self, ...) end
 		local make = physics.make_raycast
@@ -859,7 +891,7 @@ function M.install(hook)
 	-- ray starts from the raised ground and everything is told from the terrain's height, which is
 	-- added back to the height it answers.
 	hook("NavMeshMoverComponent", "move_to_ground", function(original, self, pos, ...)
-		local wg = M.active and M.active.wg
+		local wg = not M.dbg("no_hooks") and M.active and M.active.wg
 		local physics = G("PhysicsWorld")
 		local Vector3 = G("Vector3")
 		if not (wg and wg.relief and pos and physics and physics.immediate_raycast and Vector3) then return original(self, pos, ...) end
@@ -901,7 +933,7 @@ function M.install(hook)
 	-- stays the game's: the camera calls it each frame from a point at z 0 and moves by the
 	-- difference, so a lifted answer makes the camera climb without end.
 	hook("EntitySpawner", "spawn_entity", function(original, self, path, pos, ...)
-		local wg = M.active and M.active.wg
+		local wg = not M.dbg("no_hooks") and M.active and M.active.wg
 		if wg and wg.relief and pos then
 			local ground = wg.relief.height(pos.x, pos.y)
 			if pos.z < ground then pos = G("Vector3")(pos.x, pos.y, ground) end
