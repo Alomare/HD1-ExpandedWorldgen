@@ -229,24 +229,15 @@ test("relief: pieces are lifted and tilted, wide ones as one plane, and the edge
 				eq(loaded.pos.z, e.wg_pos.z)
 				eq(loaded.rot.w, e.wg_quat.w)
 				eq(loaded.data.pos.z, e.wg_pos.z)
-				-- The ground mesh takes the stretch that closes the borders, the rest keep their size.
-				local st = e.wg_stretch
-				for _, k in ipairs({ 1, 2, 3 }) do
-					-- The fake units' own x is the world's x: on a turned piece that is the piece's y.
-					local fx, fy = st.x, st.y
-					if math.abs(st.u.x) < math.abs(st.v.x) then fx, fy = st.y, st.x end
-					near(loaded.units[k].scale.x, fx, 1e-9, "stretched along x")
-					near(loaded.units[k].scale.y, fy, 1e-9, "stretched along y")
-					eq(loaded.units[k].scale.z, 1, "keeps its height")
-				end
-				eq(loaded.units[2].scale.z, 1, "a prop keeps its height")
-				-- Stretched about the middle: the origin's unit moves out along each of the piece's axes.
-				if st.s > 1 then
-					local g = loaded.units[1].pos
-					local function along(p, a) return (p.x - st.cx) * a.x + (p.y - st.cy) * a.y + (p.z - st.cz) * a.z end
-					near(along(g, st.u), along(e.wg_pos, st.u) * st.x, 1e-6, "ground at the origin moved out along the piece's x")
-					near(along(g, st.v), along(e.wg_pos, st.v) * st.y, 1e-6, "ground at the origin moved out along the piece's y")
-					near(along(g, st.n), along(e.wg_pos, st.n), 1e-6, "and stays on the plane")
+				-- Drawn sheared: the ground at the level's origin sits on the flat spot of that corner at
+				-- the ground's height, and the prop 3 m up stands straight above its flat spot.
+				local sh = e.wg_shear
+				if sh then
+					local g, prop = loaded.units[1].pose, loaded.units[2].pose
+					near(g.t.z, l.wg.relief.height(g.t.x, g.t.y), 1e-6, "ground on the ground")
+					near(g.z.x, 0, 1e-9); near(g.z.y, 0, 1e-9); near(g.z.z, 1, 1e-9, "upright")
+					near(prop.t.z - l.wg.relief.height(prop.t.x, prop.t.y), 3, 1e-6, "prop 3 m above the ground under it")
+					near(prop.x.x * prop.x.x + prop.x.y * prop.x.y, 1, 1e-9, "the same width across")
 				end
 				if e.wg_pos.z > 0.5 then lifted = lifted + 1 end
 				-- The middle of the piece sits on the ground.

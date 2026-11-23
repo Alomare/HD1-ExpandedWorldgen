@@ -12,7 +12,6 @@ local grid = obsidian.module("src/grid")
 
 local M = {}
 local TILE = grid.TILE
-M.MARGIN = 0.004   -- a tilted piece's ground reaches this share past its borders (5 cm on a cell)
 
 -- Borders along one axis that a piece crosses. spans: { {lo, hi}, ... } in cells.
 local function locked_borders(spans)
@@ -75,7 +74,7 @@ end
 -- box: { min_x, min_y, max_x, max_y } in cells, everything a piece may stand on, edge included.
 -- opts: height (metres from the lowest to the highest ground, 6), step (the most one cell rises in
 -- metres, 1.25, capped at 5 which is under 12 degrees: a tilted piece is a little shorter across,
--- by the cosine of the tilt, which place() makes up for with a stretch), rough (0 to 1, 0.5).
+-- by the cosine of the tilt, which place() makes up for with a shear), rough (0 to 1, 0.5).
 -- Answers a relief: { height = function(x, y) in metres, slope = function(x, y) -> dz/dx, dz/dy,
 -- place = function(entry) -> pos, quat, top = highest ground }, or nil when it came out flat.
 function M.build(entries, box, rng, opts)
@@ -124,30 +123,19 @@ function M.build(entries, box, rng, opts)
 	end
 
 	-- Where a piece goes: the position and rotation its level is loaded with, as plain numbers
-	-- ({ x, y, z } and { x, y, z, w }), and the stretch its ground takes about the middle of the
-	-- piece ({ s, x, y, z, nx, ny, nz }: one factor across, the middle, the ground's normal). A tilted
-	-- piece covers a little less ground across (the cosine of the tilt), which opened slits at its
-	-- borders that showed the dark below (seen in game). Its ground is stretched by the inverse, so a
-	-- piece meets its neighbours. One that slopes both ways is a rectangle where the ground is a
-	-- parallelogram, which no turn and stretch can match: where the slope changes at a border that
-	-- leaves a wedge of up to 24 |a b| metres, so such a piece reaches past each border by half of
-	-- that (each neighbour covers its own half). A margin (M.MARGIN) on top, and the stretch goes
-	-- about the middle, because a ground mesh may sit at the level's origin or at the piece's middle.
-	-- The stretch: { s (the larger factor), x, y (along the piece's axes), cx, cy, cz (the middle),
-	-- u, v, n (the piece's axes and normal in the world, as { x, y, z }) }.
+	-- ({ x, y, z } and { x, y, z, w }), and the shear that draws it (nil on flat ground).
+	--
+	-- The level is loaded tilted onto its plane, so that its collision follows the slope. A turn
+	-- can't lay a square on a slope, though: a tilted piece covers less ground across (the cosine of
+	-- the tilt), one tilted both ways is a parallelogram, and its walls lean, so that neighbours with
+	-- other tilts part above the ground (seen in game: slits along borders, black wedges between the
+	-- cliffs of the edge). What is drawn is the flat piece sheared onto the plane instead: each point
+	-- keeps its place across and is lifted by a x + b y. Neighbours then meet exactly along every
+	-- border and walls and trees stay upright (the engine draws a sheared pose). The collision stays
+	-- the turned one, which leaves slits of a few centimetres on borders (see on_border).
+	-- The shear: { a, b (the slope), cx, cy, cz (the middle), pos (the tilted origin), flat (the flat
+	-- origin), back (the turn from the tilted level to the flat one) }.
 	function R.place(e)
-		local pos, q, sx, sy, mid = R.frame(e)
-		if math.max(sx, sy) > 1 + 1e-9 then sx, sy = sx * (1 + M.MARGIN), sy * (1 + M.MARGIN) end
-		local function axis(x, y, z)
-			local ax, ay, az = M.rotate(q, x, y, z)
-			return { x = ax, y = ay, z = az }
-		end
-		return pos, { x = q[1], y = q[2], z = q[3], w = q[4] },
-			{ s = math.max(sx, sy), x = sx, y = sy, cx = mid[1], cy = mid[2], cz = mid[3], u = axis(1, 0, 0), v = axis(0, 1, 0), n = axis(0, 0, 1) }
-	end
-
-	-- The level's origin, rotation, stretch along the piece's own axes, middle and normal.
-	function R.frame(e)
 		local rot = e.rot or 0
 		local x0, y0, x1, y1 = grid.span(e.x, e.y, rot, e.size_x or 1, e.size_y or 1)
 		local cx, cy = (x0 + x1 + 1) * TILE / 2, (y0 + y1 + 1) * TILE / 2
@@ -162,24 +150,20 @@ function M.build(entries, box, rng, opts)
 		if axis > 1e-9 then tilt = M.axis_angle(-ny / axis, nx / axis, 0, math.acos(nz)) end
 		local q = M.multiply(tilt, yaw)
 		local w, h = (e.size_x or 1) * TILE, (e.size_y or 1) * TILE
-		local ux, uy = M.rotate(q, 1, 0, 0)
-		local vx, vy = M.rotate(q, 0, 1, 0)
-		local sx, sy = 1 / math.sqrt(ux * ux + uy * uy), 1 / math.sqrt(vx * vx + vy * vy)
-		if a ~= 0 and b ~= 0 then
-			local reach = math.max(w, h) / 2 * math.abs(a * b) + 0.01
-			sx, sy = sx * (1 + 2 * reach / w), sy * (1 + 2 * reach / h)
-		end
-		-- The level's origin, so that the middle of the piece sits on the middle of its cells; the
-		-- ground is then stretched about that middle.
 		local cz = R.height(cx, cy)
 		local ox, oy, oz = M.rotate(q, w / 2, h / 2, 0)
-		return { x = cx - ox, y = cy - oy, z = cz - oz }, q, sx, sy, { cx, cy, cz }
+		local pos = { x = cx - ox, y = cy - oy, z = cz - oz }
+		local sh
+		if a ~= 0 or b ~= 0 then
+			local fx, fy = M.rotate(yaw, w / 2, h / 2, 0)
+			sh = { a = a, b = b, cx = cx, cy = cy, cz = cz, pos = pos, flat = { x = cx - fx, y = cy - fy, z = cz },
+				back = M.multiply(yaw, { -q[1], -q[2], -q[3], q[4] }) }
+		end
+		return pos, { x = q[1], y = q[2], z = q[3], w = q[4] }, sh
 	end
 
 	return R
 end
-
-local function dot(a, x, y, z) return a.x * x + a.y * y + a.z * z end
 
 -- Whether a point lies within w metres of a cell border.
 function M.on_border(x, y, w)
@@ -187,19 +171,17 @@ function M.on_border(x, y, w)
 	return math.min(fx, TILE - fx, fy, TILE - fy) <= w
 end
 
--- Where a ground unit at p ({ x, y, z }) goes when its piece's ground is stretched by st (from
--- place): away from the middle along the piece's two axes, not along its normal.
-function M.stretched(st, p)
-	local dx, dy, dz = p.x - st.cx, p.y - st.cy, p.z - st.cz
-	local a, b, c = dot(st.u, dx, dy, dz) * st.x, dot(st.v, dx, dy, dz) * st.y, dot(st.n, dx, dy, dz)
-	return st.cx + a * st.u.x + b * st.v.x + c * st.n.x, st.cy + a * st.u.y + b * st.v.y + c * st.n.y, st.cz + a * st.u.z + b * st.v.z + c * st.n.z
+-- Where a point p ({ x, y, z }) of the tilted level is drawn under the shear sh (from place).
+function M.sheared(sh, p)
+	local x, y, z = M.rotate(sh.back, p.x - sh.pos.x, p.y - sh.pos.y, p.z - sh.pos.z)
+	x, y, z = sh.flat.x + x, sh.flat.y + y, sh.flat.z + z
+	return x, y, z + sh.a * (x - sh.cx) + sh.b * (y - sh.cy)
 end
 
--- The scale a ground unit takes along its own x and y: right ({ x, y, z }) is the unit's own x
--- axis in the world. A unit turned across the piece takes the piece's two factors the other way.
-function M.unit_stretch(st, right)
-	if math.abs(dot(st.u, right.x, right.y, right.z)) >= math.abs(dot(st.v, right.x, right.y, right.z)) then return st.x, st.y end
-	return st.y, st.x
+-- A direction or axis v of the tilted level, as the shear draws it.
+function M.sheared_axis(sh, v)
+	local x, y, z = M.rotate(sh.back, v.x, v.y, v.z)
+	return x, y, z + sh.a * x + sh.b * y
 end
 
 -- Quaternions as { x, y, z, w }.

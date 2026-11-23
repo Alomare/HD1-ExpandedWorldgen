@@ -414,7 +414,7 @@ local function finish(self, wg, dx, dy)
 		wg.relief = relief_lib.build(self.spawn_list, { x0, y0, x1, y1 }, wg.rng:fork("relief"), p.relief)
 		if wg.relief then
 			for _, e in ipairs(self.spawn_list) do
-				e.wg_pos, e.wg_quat, e.wg_stretch = wg.relief.place(e)
+				e.wg_pos, e.wg_quat, e.wg_shear = wg.relief.place(e)
 			end
 		end
 	end
@@ -475,30 +475,28 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 
-	-- A tilted piece, stretched about its middle so its borders reach its neighbours'
-	-- (relief.place). Every unit takes it: a piece's ground may be one mesh at the level's origin,
-	-- one at the middle or several smaller ones (seen in game: stretching only the origin's unit, then
-	-- only the wide ones, left slits). A stretch of a few thousandths is not seen on a prop.
-	local Unit = G("Unit")
-	if wg.relief and Unit and Unit.set_local_scale and Level.units then
-		local stretched = 0
+	-- A tilted piece is drawn sheared onto its plane (relief.place): every unit's pose is that of the
+	-- flat piece, lifted by the slope. The collision keeps the tilted load.
+	local Unit, M4 = G("Unit"), G("Matrix4x4")
+	if wg.relief and Unit and Unit.set_local_pose and M4 and Level.units then
+		local sheared = 0
 		local ok, err = pcall(function()
 			for _, e in ipairs(list) do
-				local st = e.wg_stretch
-				if e.level and st and st.s > 1 + 1e-9 then
+				local sh = e.wg_shear
+				if e.level and sh then
 					for _, u in ipairs(Level.units(e.level)) do
-						local k = Unit.local_scale(u, 0)
-						local fx, fy = relief_lib.unit_stretch(st, Quaternion.right(Unit.local_rotation(u, 0)))
-						Unit.set_local_scale(u, 0, Vector3(k.x * fx, k.y * fy, k.z))
-						local x, y, z = relief_lib.stretched(st, Unit.local_position(u, 0))
-						Unit.set_local_position(u, 0, Vector3(x, y, z))
-						stretched = stretched + 1
+						local m = Unit.local_pose(u, 0)
+						local t = M4.translation(m)
+						local tx, ty, tz = relief_lib.sheared(sh, t)
+						local function axis(v) return Vector3(relief_lib.sheared_axis(sh, v)) end
+						Unit.set_local_pose(u, 0, M4.from_axes(axis(M4.x(m)), axis(M4.y(m)), axis(M4.z(m)), Vector3(tx, ty, tz)))
+						sheared = sheared + 1
 					end
 				end
 			end
 		end)
-		if not ok then M.log("stretching the ground failed: " .. tostring(err)) end
-		wg.stretched = stretched
+		if not ok then M.log("shearing the ground failed: " .. tostring(err)) end
+		wg.sheared = sheared
 	end
 
 	wg.units = {}
@@ -512,8 +510,8 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 	M.active = self
-	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units stretched"):format(#list, #wg.units,
-		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.stretched or 0))
+	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared"):format(#list, #wg.units,
+		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.sheared or 0))
 end
 
 ----------------------------------------------------------------------------------------------------

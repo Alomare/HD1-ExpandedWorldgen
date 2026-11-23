@@ -42,6 +42,20 @@ V.__mul = function(a, b)
 end
 V.__div = function(a, b) return vec(a.x / b, a.y / b, a.z / b) end
 
+-- A quaternion of from_elements ({ x, y, z, w }) turning v.
+local function elements_rotate(q, v)
+	local qx, qy, qz, qw = q.x, q.y, q.z, q.w
+	local tx, ty, tz = 2 * (qy * v.z - qz * v.y), 2 * (qz * v.x - qx * v.z), 2 * (qx * v.y - qy * v.x)
+	return vec(v.x + qw * tx + (qy * tz - qz * ty), v.y + qw * ty + (qz * tx - qx * tz), v.z + qw * tz + (qx * ty - qy * tx))
+end
+
+-- A unit's pose: its axes and translation.
+local function pose(rot, p)
+	local function axis(v) return rot and rot.w and elements_rotate(rot, v) or v end
+	return { x = axis(vec(1, 0, 0)), y = axis(vec(0, 1, 0)), z = axis(vec(0, 0, 1)), t = p }
+end
+M.pose = pose
+
 local function quat_rotate(q, v)
 	if q.axis and math.abs(q.axis.z) == 1 then
 		local c, s = math.cos(q.angle * q.axis.z), math.sin(q.angle * q.axis.z)
@@ -163,12 +177,14 @@ function M.install()
 	_G.Unit = {
 		camera = function() return {} end,
 		set_unit_visibility = function(u, shown) u.shown = shown end,
-		local_position = function(u) return u.pos end,
-		local_scale = function(u) return u.scale end,
-		set_local_scale = function(u, _, s) u.scale = s end,
-		set_local_position = function(u, _, p) u.pos = p end,
-		local_rotation = function(u) return { right = u.right or vec(1, 0, 0) } end,
-		box = function(u) return {}, u.radius end,
+		local_position = function(u) return u.pose.t end,
+		local_pose = function(u) return u.pose end,
+		set_local_pose = function(u, _, m) u.pose = m end,
+	}
+	_G.Matrix4x4 = {
+		x = function(m) return m.x end, y = function(m) return m.y end, z = function(m) return m.z end,
+		translation = function(m) return m.t end,
+		from_axes = function(x, y, z, t) return { x = x, y = y, z = z, t = t } end,
 	}
 	_G.Gui = { bitmap_3d = function(gui, name, turn, _, _, size)
 		M.bitmaps[#M.bitmaps + 1] = { gui = gui, name = name, pos = turn.pos, size = size }
@@ -194,12 +210,15 @@ function M.world_proxy()
 	function class:get_world() return {} end
 	function class:viewport() return viewport end
 	function class:load_level_with_object_sets(name, path, _, sets, _, pos, rot)
-		-- A ground mesh at the level's origin and a prop elsewhere, as the game's pieces have them,
-		-- and a ground mesh away from the origin (where some pieces have theirs).
-		local ground = { shown = true, ground = true, pos = vec(pos.x, pos.y, pos.z), scale = vec(1, 1, 1), radius = vec(12, 12, 1) }
-		local prop = { shown = true, pos = vec(pos.x + 5, pos.y + 7, pos.z), scale = vec(1, 1, 1), radius = vec(2, 2, 3) }
-		local ground2 = { shown = true, ground = true, pos = vec(pos.x + 12, pos.y + 12, pos.z), scale = vec(1, 1, 1), radius = vec(12, 12, 1) }
-		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { ground, prop, ground2 } }
+		-- A ground mesh at the level's origin and a prop 5 m across and 7 m along the level's own
+		-- axes, 3 m up, as the game's pieces have them; each placed by the level's turn.
+		local function at(x, y, z)
+			local d = rot and rot.w and elements_rotate(rot, vec(x, y, z)) or vec(x, y, z)
+			return pose(rot, vec(pos.x + d.x, pos.y + d.y, pos.z + d.z))
+		end
+		local ground = { shown = true, ground = true, pose = at(0, 0, 0) }
+		local prop = { shown = true, pose = at(5, 7, 3) }
+		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { ground, prop } }
 		M.levels[#M.levels + 1] = level
 		return level
 	end

@@ -157,7 +157,7 @@ end
 -- The four corners of a piece's footprint as its level carries them: the game's flat spot of each
 -- corner, and where the piece's position and rotation put it.
 local function corners(e, r)
-	local pos, q, stretch = r.place(e)
+	local pos, q, sh = r.place(e)
 	local rot = e.rot
 	local px, py = 24 * e.x, 24 * e.y
 	if rot == 1 or rot == 2 then px = px + 24 end
@@ -167,7 +167,8 @@ local function corners(e, r)
 	for _, c in ipairs({ { 0, 0 }, { 24 * e.size_x, 0 }, { 0, 24 * e.size_y }, { 24 * e.size_x, 24 * e.size_y } }) do
 		local fx, fy = relief.rotate(yaw, c[1], c[2], 0)
 		local wx, wy, wz = relief.rotate({ q.x, q.y, q.z, q.w }, c[1], c[2], 0)
-		local x, y, z = relief.stretched(stretch, { x = pos.x + wx, y = pos.y + wy, z = pos.z + wz })
+		local x, y, z = pos.x + wx, pos.y + wy, pos.z + wz
+		if sh then x, y, z = relief.sheared(sh, { x = x, y = y, z = z }) end
 		out[#out + 1] = { flat_x = px + fx, flat_y = py + fy, x = x, y = y, z = z }
 	end
 	return out
@@ -179,59 +180,37 @@ test("relief: every corner of every piece lies on the ground it is given, so nei
 		{ x = 9, y = 6, rot = 1, size_x = 3, size_y = 1 },
 		{ x = 6, y = 10, rot = 2, size_x = 2, size_y = 1 },
 	}
-	-- Pieces sloping one way meet exactly. One sloping both ways covers its cells with a little to
-	-- spare: every flat corner of its cells lies inside what the piece covers. (Before the stretch:
-	-- 6 cm slits along the borders, seen in game.)
-	local function inside(px, py, q)
-		-- q: corners in the order 00, 10, 01, 11; the quad runs 00, 10, 11, 01.
-		local ring = { q[1], q[2], q[4], q[3] }
-		local sign = 0
-		for i = 1, 4 do
-			local a, b = ring[i], ring[i % 4 + 1]
-			local cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
-			if math.abs(cross) > 1e-9 then
-				local s = cross > 0 and 1 or -1
-				if sign ~= 0 and s ~= sign then return false end
-				sign = s
-			end
-		end
-		return true
-	end
-	local built, worst, spare = 0, 0, 0
+	-- Drawn sheared, every piece covers exactly its cells, each corner at the height of the ground
+	-- there, so neighbours meet along every border whatever their slopes. (Turned, pieces left
+	-- slits along the borders and wedges where the slope changed both ways, seen in game.)
+	local built, sloped = 0, 0
 	for seed = 1, 30 do
 		local entries = fake_entries(14, 12, wide)
-		local r = relief.build(entries, { 0, 0, 13, 11 }, rng.new(seed, "relief"), { height = 14, step = 2, rough = 0.7 })
+		local r = relief.build(entries, { 0, 0, 13, 11 }, rng.new(seed, "relief"), { height = 20, step = 4, rough = 0.7 })
 		if r then
 			built = built + 1
-			yes(r.top <= 14.001 and r.top > 0, "within the height asked")
+			yes(r.top <= 20.001 and r.top > 0, "within the height asked")
 			for _, e in ipairs(entries) do
-				local _, _, stretch = r.place(e)
 				local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot, e.size_x, e.size_y)
-				local mx, my = (x0 + x1 + 1) * 12, (y0 + y1 + 1) * 12
-				local a, b = r.slope(mx, my)
-				local cs = corners(e, r)
-				for _, c in ipairs(cs) do
-					-- On the ground's own plane, wherever the corner reaches.
-					near(c.z, r.height(mx, my) + a * (c.x - mx) + b * (c.y - my), 0.002, "corner on the plane")
-					if a == 0 and b == 0 then
-						near(c.x, c.flat_x, 0.002, "corner x, flat")
-						near(c.y, c.flat_y, 0.002, "corner y, flat")
-					elseif a == 0 or b == 0 then
-						-- Past its cells by the stretch at most (one factor across, with the margin).
-						local most = 24 * math.max(e.size_x, e.size_y) * (stretch.s - 1) + 0.002
-						yes(math.abs(c.x - c.flat_x) <= most and math.abs(c.y - c.flat_y) <= most, "corner of a piece sloping one way, near its cell's")
-					else
-						worst = math.max(worst, math.abs(c.x - c.flat_x), math.abs(c.y - c.flat_y))
-					end
-					yes(inside(c.flat_x, c.flat_y, cs), "the cells' corner is covered by " .. e.x .. "," .. e.y)
+				local a, b = r.slope((x0 + x1 + 1) * 12, (y0 + y1 + 1) * 12)
+				if a ~= 0 and b ~= 0 then sloped = sloped + 1 end
+				for _, c in ipairs(corners(e, r)) do
+					near(c.x, c.flat_x, 1e-6, "corner x")
+					near(c.y, c.flat_y, 1e-6, "corner y")
+					near(c.z, r.height(c.flat_x, c.flat_y), 1e-6, "corner on the ground")
 				end
-				yes(stretch.s > 0.999999 and stretch.s < 1.03, "a stretch of under 3%: " .. stretch.s)
-				if a == 0 and b == 0 then eq(stretch.s, 1, "a flat piece keeps its size") end
+				-- What stands upright on the tilted level stands upright as drawn.
+				local _, q, sh = r.place(e)
+				if sh then
+					local ux, uy, uz = relief.rotate({ q.x, q.y, q.z, q.w }, 0, 0, 1)
+					local x, y, z = relief.sheared_axis(sh, { x = ux, y = uy, z = uz })
+					near(x, 0, 1e-9); near(y, 0, 1e-9); near(z, 1, 1e-9, "up stays up")
+				end
 			end
 		end
 	end
 	yes(built >= 25, "most seeds give relief")
-	yes(worst < 0.5, "a piece sloping both ways reaches past its cells by under 50 cm: " .. worst)
+	yes(sloped > 50, "pieces sloping both ways were tried: " .. sloped)
 end)
 
 test("relief: flat when asked for none, and never below 0", function()
