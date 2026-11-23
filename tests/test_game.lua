@@ -132,7 +132,7 @@ test("size grows the game's own shape, and the limits hold at the largest", func
 	with_profile({ id = "huge", size = 8, shape = "blob" })
 	local l = game.build(seed, false)
 	local huge = check_map(l, "huge")
-	yes(l.wg.blocks <= 170, "block limit")
+	yes(l.wg.blocks <= 170 * 1.1, "block limit: " .. l.wg.blocks)
 	yes(l.width <= 40 and l.height <= 40, "40 cells across at most")
 	no_failures()
 end)

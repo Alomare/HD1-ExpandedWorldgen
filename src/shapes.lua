@@ -25,6 +25,22 @@ local function count(set)
 end
 M.count = count
 
+-- The cells a map of n blocks covers with its edge, about INNER n + EDGE sqrt(n): fitted on maps
+-- of 10 to 60 blocks (tools/size_stats.lua; the game's own are about 10 blocks, 106 cells).
+M.INNER, M.EDGE = 3, 25
+local function footprint(n) return M.INNER * n + M.EDGE * math.sqrt(n) end
+
+-- The blocks that give size times the footprint of a map of n0 blocks: the size of a map is the
+-- ground it covers on the map screen, edge and all. Growing only the blocks inside made a map of
+-- size 4 cover 2.4 times the game's ground.
+function M.blocks_for(n0, size)
+	-- Smaller than the game's: the blocks shrink as they did, so the extraction still finds room.
+	if size <= 1 then return math.floor(n0 * size + 0.5) end
+	local target = footprint(n0) * size
+	local root = (-M.EDGE + math.sqrt(M.EDGE * M.EDGE + 4 * M.INNER * target)) / (2 * M.INNER)
+	return math.floor(root * root + 0.5)
+end
+
 local function filled_neighbours(set, bx, by)
 	local n = 0
 	for i = 1, 4 do

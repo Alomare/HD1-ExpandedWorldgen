@@ -234,7 +234,7 @@ local function reshape(self, wg)
 	local own = shapes.from_area(self.area_map)
 	if not own then return end
 	local n0 = shapes.count(own)
-	local n = math.max(4, math.min(p.max_blocks, math.floor(n0 * p.size + 0.5)))
+	local n = math.max(4, math.min(p.max_blocks, shapes.blocks_for(n0, p.size)))
 	local set = own
 	local stream = wg.rng:fork("area")
 	if p.shape ~= "vanilla" then
