@@ -166,8 +166,9 @@ local function corners(e, r)
 	local out = {}
 	for _, c in ipairs({ { 0, 0 }, { 24 * e.size_x, 0 }, { 0, 24 * e.size_y }, { 24 * e.size_x, 24 * e.size_y } }) do
 		local fx, fy = relief.rotate(yaw, c[1], c[2], 0)
-		local wx, wy, wz = relief.rotate({ q.x, q.y, q.z, q.w }, c[1] * stretch.x, c[2] * stretch.y, 0)
-		out[#out + 1] = { flat_x = px + fx, flat_y = py + fy, x = pos.x + wx, y = pos.y + wy, z = pos.z + wz }
+		local wx, wy, wz = relief.rotate({ q.x, q.y, q.z, q.w }, c[1], c[2], 0)
+		local x, y, z = relief.stretched(stretch, { x = pos.x + wx, y = pos.y + wy, z = pos.z + wz })
+		out[#out + 1] = { flat_x = px + fx, flat_y = py + fy, x = x, y = y, z = z }
 	end
 	return out
 end
@@ -212,20 +213,25 @@ test("relief: every corner of every piece lies on the ground it is given, so nei
 				for _, c in ipairs(cs) do
 					-- On the ground's own plane, wherever the corner reaches.
 					near(c.z, r.height(mx, my) + a * (c.x - mx) + b * (c.y - my), 0.002, "corner on the plane")
-					if a == 0 or b == 0 then
-						near(c.x, c.flat_x, 0.002, "corner x, one slope")
-						near(c.y, c.flat_y, 0.002, "corner y, one slope")
+					if a == 0 and b == 0 then
+						near(c.x, c.flat_x, 0.002, "corner x, flat")
+						near(c.y, c.flat_y, 0.002, "corner y, flat")
+					elseif a == 0 or b == 0 then
+						-- Past its cells by the stretch at most (one factor across, with the margin).
+						local most = 24 * math.max(e.size_x, e.size_y) * (stretch.s - 1) + 0.002
+						yes(math.abs(c.x - c.flat_x) <= most and math.abs(c.y - c.flat_y) <= most, "corner of a piece sloping one way, near its cell's")
 					else
 						worst = math.max(worst, math.abs(c.x - c.flat_x), math.abs(c.y - c.flat_y))
 					end
 					yes(inside(c.flat_x, c.flat_y, cs), "the cells' corner is covered by " .. e.x .. "," .. e.y)
 				end
-				yes(stretch.x > 0.999999 and stretch.x < 1.02 and stretch.y > 0.999999 and stretch.y < 1.02, "a stretch of under 2%: " .. stretch.x .. " " .. stretch.y)
+				yes(stretch.s > 0.999999 and stretch.s < 1.03, "a stretch of under 3%: " .. stretch.s)
+				if a == 0 and b == 0 then eq(stretch.s, 1, "a flat piece keeps its size") end
 			end
 		end
 	end
 	yes(built >= 25, "most seeds give relief")
-	yes(worst < 0.3, "a piece sloping both ways reaches past its cells by under 30 cm: " .. worst)
+	yes(worst < 0.5, "a piece sloping both ways reaches past its cells by under 50 cm: " .. worst)
 end)
 
 test("relief: flat when asked for none, and never below 0", function()
@@ -256,7 +262,7 @@ test("profile: numbers are brought inside the limits, and unknown names fall bac
 		biomes = { "desert", "moon", "snow", "snow", { env = "lava", weight = -3 } }, backdrop = 50,
 		objectives = { scale = 100, max = 99 }, props = { { unit = "a/b", per_tile = { 2, 400 } }, { per_tile = 1 } } }, CTX, rng.new(1, "p"))
 	eq(p.shape, "vanilla"); eq(p.size, 8); eq(p.across, shapes.MAX_ACROSS)
-	eq(p.relief.height, 40); eq(p.relief.step, 2)
+	eq(p.relief.height, 40); eq(p.relief.step, 5)
 	eq(#p.biomes, 3); eq(p.biomes[1].env, "desert"); eq(p.biomes[2].env, "snow"); eq(p.biomes[3].env, "lava")
 	eq(p.backdrop.rings, profiles.MAX_RINGS)
 	eq(p.objectives.scale, 4); eq(p.objectives.max, 12)

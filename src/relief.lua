@@ -12,6 +12,7 @@ local grid = obsidian.module("src/grid")
 
 local M = {}
 local TILE = grid.TILE
+M.MARGIN = 0.004   -- a tilted piece's ground reaches this share past its borders (5 cm on a cell)
 
 -- Borders along one axis that a piece crosses. spans: { {lo, hi}, ... } in cells.
 local function locked_borders(spans)
@@ -73,14 +74,14 @@ end
 -- entries: the spawn list once the game has re-based it (x, y, rot, size_x, size_y of each piece).
 -- box: { min_x, min_y, max_x, max_y } in cells, everything a piece may stand on, edge included.
 -- opts: height (metres from the lowest to the highest ground, 6), step (the most one cell rises in
--- metres, 1.25, capped at 2 which is under 5 degrees: a tilted piece is a little shorter across,
--- by the cosine of the tilt, which opens a slit of a few centimetres at its borders), rough (0 to 1, 0.5).
+-- metres, 1.25, capped at 5 which is under 12 degrees: a tilted piece is a little shorter across,
+-- by the cosine of the tilt, which place() makes up for with a stretch), rough (0 to 1, 0.5).
 -- Answers a relief: { height = function(x, y) in metres, slope = function(x, y) -> dz/dx, dz/dy,
 -- place = function(entry) -> pos, quat, top = highest ground }, or nil when it came out flat.
 function M.build(entries, box, rng, opts)
 	opts = opts or {}
 	local total = math.max(0, math.min(40, tonumber(opts.height) or 6))
-	local step = math.max(0.1, math.min(2, tonumber(opts.step) or 1.25))
+	local step = math.max(0.1, math.min(5, tonumber(opts.step) or 1.25))
 	local rough = math.max(0, math.min(1, tonumber(opts.rough) or 0.5))
 	if total <= 0 then return nil end
 
@@ -123,15 +124,30 @@ function M.build(entries, box, rng, opts)
 	end
 
 	-- Where a piece goes: the position and rotation its level is loaded with, as plain numbers
-	-- ({ x, y, z } and { x, y, z, w }), and the stretch ({ x, y }, along the piece's own axes) its
-	-- ground takes about the level's origin. A tilted piece covers a little less ground across (the
-	-- cosine of the tilt), which opened slits at its borders that showed the dark below (seen in
-	-- game). Its ground is stretched by the inverse, about the middle of the piece, so a piece that
-	-- slopes one way meets its neighbours exactly. One that slopes both ways is a rectangle where the
-	-- ground is a parallelogram, which no turn and stretch can match: where the slope changes at a
-	-- border that leaves a wedge of up to 24 |a b| metres, so such a piece reaches past each border
-	-- by half of that (each neighbour covers its own half) and a centimetre.
+	-- ({ x, y, z } and { x, y, z, w }), and the stretch its ground takes about the middle of the
+	-- piece ({ s, x, y, z, nx, ny, nz }: one factor across, the middle, the ground's normal). A tilted
+	-- piece covers a little less ground across (the cosine of the tilt), which opened slits at its
+	-- borders that showed the dark below (seen in game). Its ground is stretched by the inverse, so a
+	-- piece meets its neighbours. One that slopes both ways is a rectangle where the ground is a
+	-- parallelogram, which no turn and stretch can match: where the slope changes at a border that
+	-- leaves a wedge of up to 24 |a b| metres, so such a piece reaches past each border by half of
+	-- that (each neighbour covers its own half). A margin (M.MARGIN) on top, and the stretch goes
+	-- about the middle, because a ground mesh may sit at the level's origin or at the piece's middle.
+	-- The stretch: { s (the larger factor), x, y (along the piece's axes), cx, cy, cz (the middle),
+	-- u, v, n (the piece's axes and normal in the world, as { x, y, z }) }.
 	function R.place(e)
+		local pos, q, sx, sy, mid = R.frame(e)
+		if math.max(sx, sy) > 1 + 1e-9 then sx, sy = sx * (1 + M.MARGIN), sy * (1 + M.MARGIN) end
+		local function axis(x, y, z)
+			local ax, ay, az = M.rotate(q, x, y, z)
+			return { x = ax, y = ay, z = az }
+		end
+		return pos, { x = q[1], y = q[2], z = q[3], w = q[4] },
+			{ s = math.max(sx, sy), x = sx, y = sy, cx = mid[1], cy = mid[2], cz = mid[3], u = axis(1, 0, 0), v = axis(0, 1, 0), n = axis(0, 0, 1) }
+	end
+
+	-- The level's origin, rotation, stretch along the piece's own axes, middle and normal.
+	function R.frame(e)
 		local rot = e.rot or 0
 		local x0, y0, x1, y1 = grid.span(e.x, e.y, rot, e.size_x or 1, e.size_y or 1)
 		local cx, cy = (x0 + x1 + 1) * TILE / 2, (y0 + y1 + 1) * TILE / 2
@@ -153,12 +169,37 @@ function M.build(entries, box, rng, opts)
 			local reach = math.max(w, h) / 2 * math.abs(a * b) + 0.01
 			sx, sy = sx * (1 + 2 * reach / w), sy * (1 + 2 * reach / h)
 		end
-		-- The level's origin, so that the middle of the stretched piece sits on the middle of its cells.
-		local ox, oy, oz = M.rotate(q, w / 2 * sx, h / 2 * sy, 0)
-		return { x = cx - ox, y = cy - oy, z = R.height(cx, cy) - oz }, { x = q[1], y = q[2], z = q[3], w = q[4] }, { x = sx, y = sy }
+		-- The level's origin, so that the middle of the piece sits on the middle of its cells; the
+		-- ground is then stretched about that middle.
+		local cz = R.height(cx, cy)
+		local ox, oy, oz = M.rotate(q, w / 2, h / 2, 0)
+		return { x = cx - ox, y = cy - oy, z = cz - oz }, q, sx, sy, { cx, cy, cz }
 	end
 
 	return R
+end
+
+local function dot(a, x, y, z) return a.x * x + a.y * y + a.z * z end
+
+-- Whether a point lies within w metres of a cell border.
+function M.on_border(x, y, w)
+	local fx, fy = x % TILE, y % TILE
+	return math.min(fx, TILE - fx, fy, TILE - fy) <= w
+end
+
+-- Where a ground unit at p ({ x, y, z }) goes when its piece's ground is stretched by st (from
+-- place): away from the middle along the piece's two axes, not along its normal.
+function M.stretched(st, p)
+	local dx, dy, dz = p.x - st.cx, p.y - st.cy, p.z - st.cz
+	local a, b, c = dot(st.u, dx, dy, dz) * st.x, dot(st.v, dx, dy, dz) * st.y, dot(st.n, dx, dy, dz)
+	return st.cx + a * st.u.x + b * st.v.x + c * st.n.x, st.cy + a * st.u.y + b * st.v.y + c * st.n.y, st.cz + a * st.u.z + b * st.v.z + c * st.n.z
+end
+
+-- The scale a ground unit takes along its own x and y: right ({ x, y, z }) is the unit's own x
+-- axis in the world. A unit turned across the piece takes the piece's two factors the other way.
+function M.unit_stretch(st, right)
+	if math.abs(dot(st.u, right.x, right.y, right.z)) >= math.abs(dot(st.v, right.x, right.y, right.z)) then return st.x, st.y end
+	return st.y, st.x
 end
 
 -- Quaternions as { x, y, z, w }.

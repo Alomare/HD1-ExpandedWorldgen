@@ -8,7 +8,7 @@ local M = { available = false }
 
 local roots = {
 	os.getenv("WORLDGEN_GAME_SCRIPTS"),
-	"../../ProjectObsidian/ObsidianLauncher/internal/research/scripts",
+	"../../../ProjectObsidian/ObsidianLauncher/internal/research/scripts",
 }
 
 local function read(root, name)
@@ -114,6 +114,7 @@ function M.install()
 	}
 	_G.Quaternion = setmetatable({
 		rotate = quat_rotate,
+		right = function(q) return q.right end,
 		from_elements = function(x, y, z, w) return { x = x, y = y, z = z, w = w } end,
 	}, { __call = function(_, axis, angle) return { axis = axis, angle = angle } end })
 	_G.QuaternionAux = { box = function(t, q) t = t or {}; t.q = q; return t end, unbox = function(t) return t.q end }
@@ -165,6 +166,9 @@ function M.install()
 		local_position = function(u) return u.pos end,
 		local_scale = function(u) return u.scale end,
 		set_local_scale = function(u, _, s) u.scale = s end,
+		set_local_position = function(u, _, p) u.pos = p end,
+		local_rotation = function(u) return { right = u.right or vec(1, 0, 0) } end,
+		box = function(u) return {}, u.radius end,
 	}
 	_G.Gui = { bitmap_3d = function(gui, name, turn, _, _, size)
 		M.bitmaps[#M.bitmaps + 1] = { gui = gui, name = name, pos = turn.pos, size = size }
@@ -190,10 +194,12 @@ function M.world_proxy()
 	function class:get_world() return {} end
 	function class:viewport() return viewport end
 	function class:load_level_with_object_sets(name, path, _, sets, _, pos, rot)
-		-- A ground mesh at the level's origin and a prop elsewhere, as the game's pieces have them.
-		local ground = { shown = true, ground = true, pos = vec(pos.x, pos.y, pos.z), scale = vec(1, 1, 1) }
-		local prop = { shown = true, pos = vec(pos.x + 5, pos.y + 7, pos.z), scale = vec(1, 1, 1) }
-		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { ground, prop } }
+		-- A ground mesh at the level's origin and a prop elsewhere, as the game's pieces have them,
+		-- and a ground mesh away from the origin (where some pieces have theirs).
+		local ground = { shown = true, ground = true, pos = vec(pos.x, pos.y, pos.z), scale = vec(1, 1, 1), radius = vec(12, 12, 1) }
+		local prop = { shown = true, pos = vec(pos.x + 5, pos.y + 7, pos.z), scale = vec(1, 1, 1), radius = vec(2, 2, 3) }
+		local ground2 = { shown = true, ground = true, pos = vec(pos.x + 12, pos.y + 12, pos.z), scale = vec(1, 1, 1), radius = vec(12, 12, 1) }
+		local level = { name = name, path = path, sets = sets, pos = pos, rot = rot, data = {}, units = { ground, prop, ground2 } }
 		M.levels[#M.levels + 1] = level
 		return level
 	end

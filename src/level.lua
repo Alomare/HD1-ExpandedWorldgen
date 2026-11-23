@@ -23,6 +23,8 @@ local profiles = obsidian.module("src/profile")
 local props_lib = obsidian.module("src/props")
 
 local M = { rules = {}, active = nil, log = function() end }
+M.SLIT = 0.5 -- metres from a cell border where a ground ray may fall through a slit between tilted pieces
+M.NUDGE = { { 0.6, 0 }, { -0.6, 0 }, { 0, 0.6 }, { 0, -0.6 } } -- where such a ray is cast again
 
 local key, unkey = grid.key, grid.unkey
 local LISTS = { "mission", "unique", "rare", "children", "special", "common", "extract", "droppoint",
@@ -473,23 +475,24 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 
-	-- The ground of a tilted piece, stretched so its borders reach its neighbours' (relief.place).
-	-- The ground meshes are the units at the level's origin; the rest keep their size.
+	-- A tilted piece, stretched about its middle so its borders reach its neighbours'
+	-- (relief.place). Every unit takes it: a piece's ground may be one mesh at the level's origin,
+	-- one at the middle or several smaller ones (seen in game: stretching only the origin's unit, then
+	-- only the wide ones, left slits). A stretch of a few thousandths is not seen on a prop.
 	local Unit = G("Unit")
 	if wg.relief and Unit and Unit.set_local_scale and Level.units then
 		local stretched = 0
 		local ok, err = pcall(function()
 			for _, e in ipairs(list) do
-				local s = e.wg_stretch
-				if e.level and s and (math.abs(s.x - 1) > 1e-6 or math.abs(s.y - 1) > 1e-6) then
+				local st = e.wg_stretch
+				if e.level and st and st.s > 1 + 1e-9 then
 					for _, u in ipairs(Level.units(e.level)) do
-						local p = Unit.local_position(u, 0)
-						local dx, dy, dz = p.x - e.wg_pos.x, p.y - e.wg_pos.y, p.z - e.wg_pos.z
-						if dx * dx + dy * dy + dz * dz < 0.0025 then
-							local k = Unit.local_scale(u, 0)
-							Unit.set_local_scale(u, 0, Vector3(k.x * s.x, k.y * s.y, k.z))
-							stretched = stretched + 1
-						end
+						local k = Unit.local_scale(u, 0)
+						local fx, fy = relief_lib.unit_stretch(st, Quaternion.right(Unit.local_rotation(u, 0)))
+						Unit.set_local_scale(u, 0, Vector3(k.x * fx, k.y * fy, k.z))
+						local x, y, z = relief_lib.stretched(st, Unit.local_position(u, 0))
+						Unit.set_local_position(u, 0, Vector3(x, y, z))
+						stretched = stretched + 1
 					end
 				end
 			end
@@ -509,7 +512,7 @@ local function spawn(self, wg, original, spawner, register, ...)
 		end
 	end
 	M.active = self
-	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d ground units stretched"):format(#list, #wg.units,
+	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units stretched"):format(#list, #wg.units,
 		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.stretched or 0))
 end
 
@@ -827,9 +830,25 @@ function M.install(hook)
 		if h == 0 then return original(self, pos, ...) end
 		local cast = physics.immediate_raycast
 		local function pack(...) return { n = select("#", ...), ... } end
+		local level = M.active
 		physics.immediate_raycast = function(world, from, ...)
 			local lift = wg.relief.height(from.x, from.y)
 			local r = pack(cast(world, Vector3(from.x, from.y, from.z + lift), ...))
+			-- A tilted piece's collision keeps the cosine of its tilt (only what is drawn is
+			-- stretched), so a ray right on a border can fall through a slit of a few centimetres
+			-- (seen in game, up to 30 cm on the steepest relief). Such a miss inside the map is
+			-- cast again a little to each side.
+			if not r[1] and relief_lib.on_border(from.x, from.y, M.SLIT) and level.collision_map
+				and level.collision_map[key(math.floor(from.x / grid.TILE), math.floor(from.y / grid.TILE))] then
+				for _, d in ipairs(M.NUDGE) do
+					local again = pack(cast(world, Vector3(from.x + d[1], from.y + d[2], from.z + lift), ...))
+					if again[1] and again[2] then
+						again[2] = Vector3(from.x, from.y, again[2].z)
+						r = again
+						break
+					end
+				end
+			end
 			if r[1] and r[2] then r[2] = Vector3(r[2].x, r[2].y, r[2].z - lift) end
 			return unpack(r, 1, r.n)
 		end

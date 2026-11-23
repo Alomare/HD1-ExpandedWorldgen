@@ -75,7 +75,7 @@ function M.resolve(p, ctx, rng)
 		local rel = type(p.relief) == "table" and p.relief or { height = tonumber(p.relief) }
 		out.relief = {
 			height = clamp(rel.height, 0, 40, 6),
-			step = clamp(rel.step, 0.1, 2, 1.25),
+			step = clamp(rel.step, 0.1, 5, 1.25),
 			rough = clamp(rel.rough, 0, 1, 0.5),
 		}
 		if out.relief.height <= 0 then out.relief = nil end
