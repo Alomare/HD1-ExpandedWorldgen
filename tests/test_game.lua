@@ -495,6 +495,40 @@ test("unit budget: the backdrop stops where the world would pass it, every piece
 	yes(l.wg.world_units <= (all - rings + 20) * 2, "the world within the budget: " .. l.wg.world_units)
 end)
 
+-- The map's own pieces always load, so the largest maps are planned to fit: with the units each
+-- piece held in game (tests/data/units.lua), no outline at size 4 on any planet, faction or
+-- difficulty passes the budget before any backdrop.
+test("unit budget: the largest maps of every outline and planet hold no more units than the budget", function()
+	local UNITS = dofile("tests/data/units.lua")
+	local FACTIONS = { "bugs", "cyborgs", "illuminates" }
+	local worst, capped, grown = 0, 0, 0
+	for _, shape in ipairs({ "vanilla", "blob", "ring", "cross", "strip", "islands", "maze" }) do
+		for i, env in ipairs(ENVS) do
+			for j = 1, 2 do
+				with_profile({ id = "vast", size = 4, shape = shape, biomes = (j == 2) and { "lava" } or nil, layout = "patches",
+					relief = { height = 30, step = 4 }, backdrop = 4 })
+				local l = game.build(game.seed(500 + i * 7 + j, env, FACTIONS[(i + j) % 3 + 1], 13 + j), false)
+				check_map(l, shape .. " " .. env)
+				no_failures()
+				local own = 0
+				for _, e in ipairs(l.spawn_list) do
+					if not e.wg_backdrop then
+						local b = l.wg.biomes[e.wg_biome or 1]
+						local t = UNITS[b.name] or { avg = 75 }
+						own = own + (t[e.level_name] or t.avg)
+					end
+				end
+				worst = math.max(worst, own)
+				if l.wg.capped then capped = capped + 1 end
+				if (l.wg.blocks or 0) > 30 then grown = grown + 1 end
+			end
+		end
+	end
+	yes(worst <= level.UNIT_BUDGET, "most units of a map's own pieces: " .. worst)
+	yes(capped > 0, "the heaviest maps were planned smaller")
+	yes(grown > 40, "most maps still grew: " .. grown)
+end)
+
 test("objectives: the budget scales, a filter narrows the kinds, and an empty filter is ignored", function()
 	local seed = game.seed(6, "desert", "bugs", 6)
 	level.rules = {}

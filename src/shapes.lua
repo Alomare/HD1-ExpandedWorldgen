@@ -33,6 +33,26 @@ local function footprint(n) return M.INNER * n + M.EDGE * math.sqrt(n) end
 -- The blocks that give size times the footprint of a map of n0 blocks: the size of a map is the
 -- ground it covers on the map screen, edge and all. Growing only the blocks inside made a map of
 -- size 4 cover 2.4 times the game's ground.
+-- The cells a set of blocks covers with the game's edge, which runs two cells wide around the
+-- ground (the game's own maps: 39 cells of ground, about 105 with the edge).
+function M.footprint_cells(set)
+	local cells = {}
+	for k in pairs(set) do
+		local bx, by = unkey(k)
+		for dx = -2, 3 do
+			for dy = -2, 3 do cells[key(bx * 2 + dx, by * 2 + dy)] = true end
+		end
+	end
+	return count(cells)
+end
+
+-- The most blocks whose footprint stays within the given cells.
+function M.most_blocks(cells)
+	if cells <= footprint(1) then return 1 end
+	local root = (-M.EDGE + math.sqrt(M.EDGE * M.EDGE + 4 * M.INNER * cells)) / (2 * M.INNER)
+	return math.max(1, math.floor(root * root))
+end
+
 function M.blocks_for(n0, size)
 	-- Smaller than the game's: the blocks shrink as they did, so the extraction still finds room.
 	if size <= 1 then return math.floor(n0 * size + 0.5) end

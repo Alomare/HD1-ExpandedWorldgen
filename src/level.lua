@@ -32,6 +32,11 @@ function M.dbg(k) local t = rawget(_G, "WG_DEBUG") return type(t) == "table" and
 -- piece was seen to hold, so the next one never takes the world past the budget.
 M.UNIT_BUDGET = 45000
 M.UNIT_STEP = 150
+-- The map's own pieces can't be left out, so a map is planned no larger than OWN_UNITS would hold,
+-- from the most units a cell of the map (edge included) brought in each biome: measured in game
+-- (tests/data/units.lua) and worked out over the largest maps by tools/unit_stats.lua.
+M.OWN_UNITS = 38000
+M.UNITS_PER_CELL = { desert = 50, forest = 40, snow = 41, lava = 75, city = 40, other = 75 }
 M.SLIT = 0.5-- metres from a cell border where a ground ray may fall through a slit between tilted pieces
 M.NUDGE = { { 0.6, 0 }, { -0.6, 0 }, { 0, 0.6 }, { 0, -0.6 } } -- where such a ray is cast again
 
@@ -244,20 +249,39 @@ local function reshape(self, wg)
 	if not own then return end
 	local n0 = shapes.count(own)
 	local n = math.max(4, math.min(p.max_blocks, shapes.blocks_for(n0, p.size)))
-	local set = own
-	local stream = wg.rng:fork("area")
-	if p.shape ~= "vanilla" then
-		local opts = clone(p.shape_opts)
-		opts.across = p.across
-		set = shapes.build(p.shape, n, stream, opts)
-	elseif n > n0 then
+	-- The units the map's own pieces would hold stay within M.OWN_UNITS (they always load, see
+	-- M.UNIT_BUDGET): the heaviest biome of the map sets how many units a cell may bring.
+	local per = 0
+	for i = 1, #wg.biomes do per = math.max(per, M.UNITS_PER_CELL[wg.biomes[i].name] or M.UNITS_PER_CELL.other) end
+	local most = shapes.most_blocks(M.OWN_UNITS / per)
+	if n > most and n > n0 then
+		n = math.max(n0, most)
+		wg.capped = true
+	end
+	if p.shape == "vanilla" and n <= n0 then
+		wg.blocks = n0
+		return
+	end
+	local function build(blocks, tries)
+		local stream = wg.rng:fork(tries == 0 and "area" or ("area" .. tries))
+		if p.shape ~= "vanilla" then
+			local opts = clone(p.shape_opts)
+			opts.across = p.across
+			return shapes.build(p.shape, blocks, stream, opts)
+		end
 		local half = math.floor(p.across / 2)
 		-- The game's shape, grown from its border. Its blocks may already sit outside the limit
 		-- the growing keeps to; they stay.
-		set = shapes.connected(shapes.unpinch(shapes.grow(own, n, stream, half, 0.5), stream, half))
-	else
-		wg.blocks = n0
-		return
+		return shapes.connected(shapes.unpinch(shapes.grow(own, blocks, stream, half, 0.5), stream, half))
+	end
+	-- Outlines with much edge for their ground (maze, islands) cover more cells than the fit
+	-- assumes: the outline built is measured, and built again smaller while it would hold too many.
+	local set, tries = build(n, 0), 0
+	while shapes.footprint_cells(set) * per > M.OWN_UNITS and n > n0 and tries < 8 do
+		tries = tries + 1
+		n = math.max(n0, math.floor(n * 0.85))
+		set = build(n, tries)
+		wg.capped = true
 	end
 	for k in pairs(self.area_map) do self.area_map[k] = nil end
 	for i = #self.area_map_lookup, 1, -1 do self.area_map_lookup[i] = nil end
