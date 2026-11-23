@@ -14,7 +14,7 @@ local M = {}
 local TILE = grid.TILE
 
 -- Borders along one axis that a piece crosses. spans: { {lo, hi}, ... } in cells.
-local function locked_borders(spans)
+function M.locked_borders(spans)
 	local locked = {}
 	for i = 1, #spans do
 		for k = spans[i][1] + 1, spans[i][2] do locked[k] = true end
@@ -22,24 +22,67 @@ local function locked_borders(spans)
 	return locked
 end
 
+-- The lines where the ground may change slope, chosen before the game places its special pieces,
+-- which are then kept between them (level.lua). A profile may only bend on a border no piece crosses,
+-- and with the pieces where the game put them nearly every border was crossed somewhere along the
+-- map: the ground came out as one or two long flat runs. entries: the pieces placed so far; area:
+-- the free cells ({ [key] = true }). Answers { x = { [border] = true }, y = ... }, a line every
+-- M.STRIP cells or so, on borders nothing placed so far crosses.
+M.STRIP = { 3, 5 }
+function M.strips(entries, area, rng)
+	local xs, ys = {}, {}
+	for i = 1, #entries do
+		local e = entries[i]
+		local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot or 0, e.size_x or 1, e.size_y or 1)
+		if x1 > x0 then xs[#xs + 1] = { x0, x1 } end
+		if y1 > y0 then ys[#ys + 1] = { y0, y1 } end
+	end
+	local bx0, by0, bx1, by1 = grid.bounds(area)
+	local out = {}
+	for _, axis in ipairs({ { "x", bx0, bx1, xs }, { "y", by0, by1, ys } }) do
+		local name, lo, hi, spans = axis[1], axis[2], axis[3], axis[4]
+		local stream, set = rng:fork(name), {}
+		if lo then
+			local locked = M.locked_borders(spans)
+			local at = lo + stream:int(M.STRIP[1], M.STRIP[2])
+			while at <= hi do
+				-- The nearest free border, at most one cell either way.
+				local pick = (not locked[at] and at) or (not locked[at + 1] and at + 1) or (not locked[at - 1] and at - 1)
+				if pick then set[pick] = true end
+				at = (pick or at) + stream:int(M.STRIP[1], M.STRIP[2])
+			end
+		end
+		out[name] = set
+	end
+	return out
+end
+
 -- One profile: heights at every cell border from c0 to c1 + 1.
 -- step: the most a cell rises (metres); top: how high the profile climbs; rough (0 to 1): the share
 -- of runs that follow the hills, the others stay level (plateaus).
--- The profile follows one or two hills placed along the span, each reaching top, as closely as the
--- step and the locked borders allow. (A random walk, as before, seldom got past half of top.)
+-- The profile follows waves that rise and fall over the span, from 0 to top, as closely as the step
+-- and the locked borders allow. The shortest wave is as short as the step lets it reach top, so a map
+-- has hills and valleys a few hundred metres apart. (One or two hills over the whole span, as before,
+-- made most of a map one long tilt or a plateau, hard to see in game.)
+-- The waves: a main one, and a longer, weaker one that keeps the hills from repeating. A sine of
+-- amplitude top / 2 and length L cells rises at most pi top / L a cell; the main wave is a little
+-- shorter than that, so the step cuts its slopes into straight runs at the step (steady slopes).
+M.WAVES = { { length = 0.7, weight = 1 }, { length = 2.3, weight = 0.4 } }
 local function profile(c0, c1, locked, rng, step, top, rough)
-	local n = c1 - c0 + 1
-	local hills = rng:chance(0.5) and 1 or 2
-	local peaks = {}
-	for i = 1, hills do peaks[i] = c0 + (i - 1 + 0.2 + 0.6 * rng:float()) * n / hills end
-	local width = n / hills * 0.45
+	local shortest = math.max(3, math.pi * top / step)
+	local waves = {}
+	for i, w in ipairs(M.WAVES) do
+		waves[i] = { length = shortest * w.length * (0.85 + 0.3 * rng:float()), phase = rng:float() * 2 * math.pi, weight = w.weight }
+	end
+	local raw, lo, hi = {}, math.huge, -math.huge
+	for k = c0, c1 + 1 do
+		local v = 0
+		for i = 1, #waves do v = v + waves[i].weight * math.sin(2 * math.pi * k / waves[i].length + waves[i].phase) end
+		raw[k], lo, hi = v, math.min(lo, v), math.max(hi, v)
+	end
 	local function target(k)
-		local t = 0
-		for i = 1, hills do
-			local d = (k - peaks[i]) / width
-			t = math.max(t, math.exp(-d * d))
-		end
-		return top * t
+		if hi - lo < 1e-9 then return 0 end
+		return top * (raw[math.max(c0, math.min(c1 + 1, k))] - lo) / (hi - lo)
 	end
 	local h = target(c0)
 	local at = { [c0] = h }
@@ -91,11 +134,11 @@ function M.build(entries, box, rng, opts)
 		if x1 > x0 then xs[#xs + 1] = { x0, x1 } end
 		if y1 > y0 then ys[#ys + 1] = { y0, y1 } end
 	end
-	-- Each axis may climb to three quarters of the height, so the two together reach it where their
-	-- hills meet; the sum is then scaled down to the height where it goes over. Scaling both keeps
-	-- every piece one plane and only makes slopes gentler.
-	local fx = profile(box[1], box[3], locked_borders(xs), rng:fork("x"), step, total * 0.75, rough)
-	local fy = profile(box[2], box[4], locked_borders(ys), rng:fork("y"), step, total * 0.75, rough)
+	-- Each axis climbs to half the height, so the two together reach it where their hills meet. (Three
+	-- quarters each, scaled down to the height afterwards, made every slope a third gentler.) The sum
+	-- is still scaled where it goes over; scaling both keeps every piece one plane.
+	local fx = profile(box[1], box[3], M.locked_borders(xs), rng:fork("x"), step, total * 0.5, rough)
+	local fy = profile(box[2], box[4], M.locked_borders(ys), rng:fork("y"), step, total * 0.5, rough)
 
 	-- Lowest ground at 0.
 	local low, high = math.huge, -math.huge

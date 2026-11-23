@@ -267,6 +267,42 @@ test("relief: pieces are lifted and tilted, wide ones as one plane, and the edge
 	yes(#tops == #ENVS and sum / #tops >= 7, "average highest ground of 10 m asked: " .. sum / math.max(1, #tops))
 end)
 
+-- A profile may only bend on borders no piece crosses; with the game's wide pieces placed anywhere
+-- nearly every border was crossed and the ground came out as one or two long, nearly flat runs (in
+-- game a 12 m map looked flat). The special pieces now stay between lines left free for bends.
+test("relief: special pieces leave room for the ground to bend, and the ground slopes", function()
+	with_profile({ id = "rugged", size = 1.6, shape = "any", relief = { height = 30, step = 4, rough = 0.8 } })
+	local slope, cells, spread = 0, 0, 0
+	for i, env in ipairs(ENVS) do
+		for j = 1, 3 do
+			local l = game.build(game.seed(60 + i * 7 + j, env, "bugs", 3 + j), true)
+			check_map(l, "rugged " .. env)
+			no_failures()
+			local rel = l.wg.relief
+			yes(rel and l.wg.strips, "relief and strips")
+			-- No special piece crosses a strip line.
+			for _, e in ipairs(l.spawn_list) do
+				if e.wg_cat == "special" then
+					local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot, e.size_x, e.size_y)
+					for k = x0 + 1, x1 do yes(not l.wg.strips.x[k], e.level_name .. " crosses a line along x") end
+					for k = y0 + 1, y1 do yes(not l.wg.strips.y[k], e.level_name .. " crosses a line along y") end
+				end
+				if not e.is_edge then
+					local cx, cy = (e.x + 0.5) * 24, (e.y + 0.5) * 24
+					local a, b = rel.slope(cx, cy)
+					slope, cells = slope + math.sqrt(a * a + b * b) * 24, cells + 1
+					local h, most = rel.height(cx, cy), 0
+					for ox = -72, 72, 72 do for oy = -72, 72, 72 do most = math.max(most, math.abs(rel.height(cx + ox, cy + oy) - h)) end end
+					spread = spread + most
+				end
+			end
+		end
+	end
+	-- Measured with tools/relief_stats.lua: 1.3 m a cell and 4.5 m within 72 m before the strips.
+	yes(slope / cells > 1.8, "average slope " .. slope / cells .. " m a cell")
+	yes(spread / cells > 6, "average change within 72 m: " .. spread / cells)
+end)
+
 -- SpawnManager takes a ray hit only at the height of flat ground (-0.5 to 1 m for a spawn), so on
 -- raised ground the players never dropped and the screen stayed black. A stand-in with the game's
 -- check, hooked as the mod hooks the real one.

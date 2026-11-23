@@ -271,30 +271,54 @@ end
 ----------------------------------------------------------------------------------------------------
 -- The game's step once per biome, each on its own part of the free ground with its own pieces.
 
-local function per_biome(self, wg, original, cat, ...)
-	if not wg.layout then
+-- strips (optional): { x = { [border] = true }, y = ... }, lines no piece of this step may cross; the
+-- step then runs once per biome and strip, with the map's width and height those of the part, which
+-- is what sets how many tries the game's special step makes.
+local function per_biome(self, wg, original, cat, strips, ...)
+	if not wg.layout and not strips then
 		local from = #self.spawn_list
 		original(self, ...)
 		tag(self, wg, from, cat, 1)
 		return
 	end
+	local function index(set, v)
+		local n = 0
+		for border in pairs(set) do if border <= v then n = n + 1 end end
+		return n
+	end
 	local env0, area0, lookup0 = self.environment, self.area_map, self.area_map_lookup
-	for b = 1, #wg.biomes do
-		local area, lookup = {}, {}
-		for i = 1, #lookup0 do
-			local k = lookup0[i]
-			if area0[k] and wg.layout.at(unkey(k)) == b then
-				area[k] = true
-				lookup[#lookup + 1] = k
+	local w0, h0 = self.width, self.height
+	-- The parts: biome, then strip across, then strip along, in that order on every machine.
+	local parts, order = {}, {}
+	for i = 1, #lookup0 do
+		local k = lookup0[i]
+		if area0[k] then
+			local x, y = unkey(k)
+			local b = wg.layout and wg.layout.at(x, y) or 1
+			local id = strips and string.format("%d/%04d/%04d", b, index(strips.x, x), index(strips.y, y)) or tostring(b)
+			if not parts[id] then
+				parts[id] = { b = b, area = {}, lookup = {}, x0 = x, y0 = y, x1 = x, y1 = y }
+				order[#order + 1] = id
 			end
+			local p = parts[id]
+			p.area[k] = true
+			p.lookup[#p.lookup + 1] = k
+			p.x0, p.y0, p.x1, p.y1 = math.min(p.x0, x), math.min(p.y0, y), math.max(p.x1, x), math.max(p.y1, y)
 		end
+	end
+	table.sort(order)
+	for _, id in ipairs(order) do
+		local part = parts[id]
+		local b, area, lookup = part.b, part.area, part.lookup
 		if #lookup > 0 then
 			local mine = {}
 			for i = 1, #lookup do mine[i] = lookup[i] end
 			local from = #self.spawn_list
 			self.environment, self.area_map, self.area_map_lookup = wg.biomes[b].env, area, lookup
+			if strips then self.width, self.height = part.x1 - part.x0 + 1, part.y1 - part.y0 + 1 end
 			local ok, err = pcall(original, self, ...)
 			self.environment, self.area_map, self.area_map_lookup = env0, area0, lookup0
+			self.width, self.height = w0, h0
 			if not ok then M.log(cat .. " step failed for " .. wg.biomes[b].name .. ": " .. tostring(err)) end
 			-- What the step used is gone from its part; take it out of the whole.
 			local used = false
@@ -378,6 +402,12 @@ end
 local function finish(self, wg, dx, dy)
 	local p = wg.profile
 	if wg.layout then wg.layout = regions.shifted(wg.layout, dx, dy) end
+	if wg.strips then
+		local moved = { x = {}, y = {} }
+		for k in pairs(wg.strips.x) do moved.x[k - dx] = true end
+		for k in pairs(wg.strips.y) do moved.y[k - dy] = true end
+		wg.strips = moved
+	end
 	local x0, y0, x1, y1 = grid.bounds(self.collision_map)
 	if not x0 then return end
 
@@ -646,7 +676,16 @@ function M.install(hook)
 	for _, step in ipairs({ "unique", "rare", "special" }) do
 		guarded("generate_" .. step, function(original, self, wg, ...)
 			if wg.profile.open then return end
-			per_biome(self, wg, original, step, ...)
+			-- With relief, the special pieces (most of the wide ones) stay between the lines where the
+			-- ground may change slope (relief.strips); unique and rare ones are placed one by one
+			-- and keep the whole ground.
+			local strips = nil
+			if step == "special" and wg.profile.relief then
+				local ok, got = pcall(relief_lib.strips, self.spawn_list, self.area_map, wg.rng:fork("strips"))
+				if ok then strips = got else M.log("relief strips failed: " .. tostring(got)) end
+				wg.strips = strips
+			end
+			per_biome(self, wg, original, step, strips, ...)
 		end)
 	end
 
