@@ -2,7 +2,7 @@
 
 A library for HELLDIVERS (2015) mods, for [Obsidian Launcher](https://github.com/Alomare/ObsidianLauncher).
 
-Expanded Worldgen changes how the maps of planet missions are made: size, outline, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Installed alone, the library changes nothing. A mod gives the library a rule, and the rule answers a profile for each mission.
+Expanded Worldgen changes how the maps of planet missions are made: size, outline, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Installed alone, the library changes nothing. Mods give the library a rule, and the rule answers a profile for each mission.
 
 [Revamped Maps](https://github.com/Alomare/HD1-RevampedMaps) is a mod built on the library, with every feature as an option.
 
@@ -58,7 +58,7 @@ Every field is optional. Numbers outside the limits are brought inside them.
 | `backdrop` | Rows of cliff pieces outside the edge, 0 to 4, or `{ rings }` |
 | `cull` | Distance in metres beyond which backdrop pieces and props are hidden |
 
-A piece in `remix` is a table as in the `EnvironmentSettings` of the game: `name` (a level under the path of the biome), `size`, and what the kind of piece needs. A mod that ships levels of its own adds them here.
+A piece in `remix` is a table as in the `EnvironmentSettings` of the game: `name` (a level under the path of the biome), `size`, and what the kind of piece needs. Mods that ship extra levels add them here.
 
 ## Other calls
 
@@ -72,8 +72,8 @@ A piece in `remix` is a table as in the `EnvironmentSettings` of the game: `name
 
 - Planet missions only. Boss missions, Retaliatory Strikes and Proving Grounds keep the maps of the game.
 - A map is 40 tiles across at most, edge included (960 metres). The game sends positions as 16 bits over 1000 metres each way.
-- A world holds at most 65536 units. A map is planned no larger than its pieces fit in 38000 units, from the units the pieces of each biome hold, so the largest maps of lava and desert planets come out smaller than the size asked; backdrop rows stop where the world would pass 45000.
-- Terrain height is the sum of one profile along each axis, because the game lays flat pieces that can be lifted and tilted but not bent. The collision of a tilted piece is slightly shorter across than what is drawn, which leaves slits of a few centimetres in it along the borders of steep pieces.
+- A world holds at most 65536 units. Maps are planned so the pieces fit in 38000 units, counted from the units the pieces of each biome hold, so the largest maps of lava and desert planets come out smaller than the size asked; backdrop rows stop where the world would pass 45000.
+- Terrain height is the sum of one profile along each axis, because the game lays flat pieces that can be lifted and tilted but not bent. The collision of a tilted piece is slightly shorter across than what is drawn, which leaves slits of a few centimetres along the borders of steep pieces.
 - Only one lighting setup and one sound environment per map, those of the planet.
 - A prop unit must be named, and in a loaded package. Spawning a unit from a package that is not loaded, or by a hashed name, stops the game.
 - A set piece that finds no room in 100 tries is left out, as in the game. Small parts of a map with several biomes lose more of them.
