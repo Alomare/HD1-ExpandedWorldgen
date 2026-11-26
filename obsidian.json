@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "alomare.expandedworldgen",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "name": { "en": "Expanded Worldgen" },
   "description": { "en": "A library for mods that change how mission maps are made: bigger maps, new outlines, several biomes on one map, sloped ground, scattered props and land beyond the map edge. Does nothing until another mod uses it." },
   "authors": ["Alomare"],
