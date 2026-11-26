@@ -34,7 +34,11 @@ end
 
 -- Units far from the camera are hidden by their size (src/view.lua); backdrop pieces and props far
 -- from it too, where a profile asks for that.
-local frame, view_failed = 0, false
+local frame, view_failed, light_failed, last_time = 0, false, false, nil
+local function clock()
+	local ok, t = pcall(function() return rawget(_G, "Application").time_since_launch() end)
+	return ok and t or os.clock()
+end
 if obsidian.on_frame then
 	obsidian.on_frame(function()
 		frame = frame + 1
@@ -48,6 +52,16 @@ if obsidian.on_frame then
 			if not ok then
 				view_failed = true
 				obsidian.log("draw distances stopped: " .. tostring(err))
+			end
+		end
+		local t = clock()
+		local dt = math.max(0, math.min(0.25, t - (last_time or t)))
+		last_time = t
+		if not light_failed then
+			local ok, err = pcall(level.light, pos.x, pos.y, dt)
+			if not ok then
+				light_failed = true
+				obsidian.log("biome light stopped: " .. tostring(err))
 			end
 		end
 		if frame % 20 == 0 then level.cull(pos.x, pos.y) end
@@ -109,6 +123,13 @@ function api.view(scale)
 		level.view_scale = view.clamp_scale(scale) or level.view_scale
 	end
 	return level.view_scale or false
+end
+
+-- Whether this player's camera takes the light of the biome it is over (true, the default) or keeps
+-- the planet's everywhere (false). Only this player's picture changes. Answers the setting.
+function api.biome_light(on)
+	if on ~= nil then level.biome_light = on and true or false end
+	return level.biome_light
 end
 
 -- What the generator did for the mission being played, or nil when the map is the game's own:

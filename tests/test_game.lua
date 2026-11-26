@@ -675,4 +675,11 @@ test("draw distances: meshes far from the camera are hidden and come back near i
 	level.active = saved
 end)
 
+test("biome light: each biome's shading environment, falling back to one every planet type has", function()
+	eq(level.light_name("env_city/", "shading_environment_02", "city"), "env_city/shading_environment_02")
+	eq(level.light_name("env_city/", "shading_environment_03", "city"), "env_city/shading_environment_01")
+	eq(level.light_name("env_snow/", "shading_environment_03", "snow"), "env_snow/shading_environment_03")
+	eq(level.light_name("env_lava/", "shading_environment_bugs", "lava"), "env_lava/shading_environment_01")
+end)
+
 return T

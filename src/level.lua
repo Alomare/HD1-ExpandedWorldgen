@@ -662,6 +662,16 @@ local function spawn(self, wg, original, spawner, register, ...)
 				end
 			end
 			wg.view = { pieces = pieces, units = n, next = 1 }
+			-- Which biome each cell's ground is, for the light (M.light).
+			wg.cell_biome = {}
+			for _, e in ipairs(list) do
+				if e.level and not e.wg_backdrop then
+					local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot or 0, e.size_x or 1, e.size_y or 1)
+					for cx = x0, x1 do
+						for cy = y0, y1 do wg.cell_biome[key(cx, cy)] = e.wg_biome or 1 end
+					end
+				end
+			end
 		end)
 		if not ok then M.log("draw distances failed: " .. tostring(err)) end
 	end
@@ -782,6 +792,109 @@ function M.view(x, y)
 		changed = changed + view_lib.update(p, x, y, scale, show)
 	end
 	return changed
+end
+
+-- Light of other biomes. A viewport has one shading environment, the planet's, and the props of
+-- another biome read values of their own biome's from it that no script can set (seen in game: city
+-- vehicles drawn plain white on a desert planet, right again under the city's environment). While
+-- the camera is over another biome's ground for LIGHT_DWELL seconds the viewport takes that biome's
+-- environment, and the colours below ease from the old light to the new over LIGHT_EASE seconds.
+-- Only this player's picture changes. M.biome_light false keeps the planet's light everywhere.
+M.biome_light = true
+M.LIGHT_DWELL = 1.5
+M.LIGHT_EASE = 2
+M.EASED = { { "exposure", "scalar" }, { "sun_color", "vector3" }, { "ambient_top_color", "vector3" },
+	{ "ambient_bottom_color", "vector3" }, { "fog_color", "vector3" } }
+
+-- The shading environment of a biome for a mission whose planet uses `name` (shading_environment_01
+-- to 03, or a faction's). Every planet type has 01 and 02; city has no 03 and only some have the
+-- faction ones, so those fall back to 01.
+function M.light_name(path, name, env_name)
+	if name == "shading_environment_01" or name == "shading_environment_02" then return path .. name end
+	if name == "shading_environment_03" and env_name ~= "city" then return path .. name end
+	return path .. "shading_environment_01"
+end
+
+local function read_shading(SE, env, name, kind)
+	local ok, v = pcall(SE[kind], env, name)
+	if not ok or v == nil then return nil end
+	if kind == "scalar" then return tonumber(v) end
+	return { v.x or v[1], v.y or v[2], v.z or v[3] }
+end
+
+local function lerp(a, b, t)
+	if type(a) == "number" then return a + (b - a) * t end
+	return { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t }
+end
+
+function M.light(x, y, dt)
+	local self = M.active
+	local wg = self and self.wg
+	if not (wg and wg.cell_biome and #wg.biomes > 1) then return end
+	local L = wg.light
+	if not L then
+		L = { current = 1, want = 1, wait = 0 }
+		wg.light = L
+	end
+	local target = M.biome_light and (wg.cell_biome[key(math.floor(x / grid.TILE), math.floor(y / grid.TILE))] or L.want) or 1
+	if target ~= L.want then L.want, L.wait = target, 0 end
+	local v = self.world_proxy and self.world_proxy:viewport("game_viewport")
+	if not v then return end
+	if L.want ~= L.current then
+		L.wait = L.wait + dt
+		if L.wait >= M.LIGHT_DWELL or not M.biome_light then
+			local SE = G("ShadingEnvironment")
+			local env = v:get_shading_environment()
+			local b = wg.biomes[L.want]
+			local path = L.want == 1 and (self.environment.path .. self.shading_environment)
+				or M.light_name(b.path, self.shading_environment, b.name)
+			-- What is drawn now, then the new environment with the same settings blended in.
+			local from, owned = {}, {}
+			for _, e in ipairs(M.EASED) do
+				local held = v.variable_values and v.variable_values[e[1]]
+				if L.easing and L.easing.from[e[1]] then
+					from[e[1]] = lerp(L.easing.from[e[1]], L.easing.to[e[1]], math.min(1, L.easing.t / M.LIGHT_EASE))
+					owned[e[1]] = true
+				elseif held == nil then
+					from[e[1]] = read_shading(SE, env, e[1], e[2])
+					owned[e[1]] = true
+				end
+			end
+			local settings = {}
+			for i, s in ipairs(v.shading_environment_settings or {}) do settings[i] = s end
+			v:set_shading_environment(path)
+			if #settings >= 2 then v:set_shading_environment_settings(unpack(settings)) end
+			SE.blend(env, v.shading_environment_settings)
+			local to = {}
+			for _, e in ipairs(M.EASED) do
+				if owned[e[1]] then
+					-- Out of the way while the new value is read.
+					v:remove_shading_environment_variable(e[1])
+					to[e[1]] = read_shading(SE, env, e[1], e[2])
+					if not (from[e[1]] and to[e[1]]) then from[e[1]], to[e[1]] = nil, nil end
+				end
+			end
+			L.easing = { from = from, to = to, t = 0 }
+			L.current, L.wait = L.want, 0
+		end
+	end
+	local E = L.easing
+	if E then
+		E.t = E.t + dt
+		local t = math.min(1, E.t / M.LIGHT_EASE)
+		t = t * t * (3 - 2 * t)
+		for _, e in ipairs(M.EASED) do
+			local a, b = E.from[e[1]], E.to[e[1]]
+			if a and b then
+				if E.t >= M.LIGHT_EASE then
+					v:remove_shading_environment_variable(e[1])
+				else
+					v:set_shading_environment_variable(e[1], e[2], lerp(a, b, t))
+				end
+			end
+		end
+		if E.t >= M.LIGHT_EASE then L.easing = nil end
+	end
 end
 
 -- The height of the ground at a world position in the mission being played: 0 on a flat map.
