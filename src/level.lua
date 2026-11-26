@@ -652,7 +652,7 @@ local function spawn(self, wg, original, spawner, register, ...)
 						end
 						if #shown > 0 then
 							local got, _, ext = pcall(Unit.box, u)
-							units[#units + 1] = { unit = u, meshes = shown }
+							units[#units + 1] = { unit = u, meshes = shown, name = tostring(u), count = Unit.num_meshes(u) }
 							radii[#radii + 1] = (got and ext) and math.sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z) or 1
 						end
 					end
@@ -761,6 +761,7 @@ end
 -- never walks a whole map.
 M.view_scale = 1
 M.VIEW_SHARE = 0.5 -- of the pieces each call
+M.VIEW_CHANGES = 300 -- units shown or hidden in one frame at most; the rest wait for the next frames
 function M.view(x, y)
 	local self = M.active
 	local wg = self and self.wg
@@ -768,9 +769,14 @@ function M.view(x, y)
 	if not v then return 0 end
 	local Unit = G("Unit")
 	local function show(entry, on)
-		-- Level units can be gone (destroyed by the level or the game): touching one ends the game.
-		if entry.dead or not Unit.alive(entry.unit) then
+		-- Level units can be gone (destroyed by the level's flow or the game), and the handle of one
+		-- can come back as another unit (seen in game: the game ended a few seconds into a city map).
+		-- Touching either ends the game, so a unit is touched only while it is still the one recorded.
+		if entry.dead then return end
+		if not Unit.alive(entry.unit) or tostring(entry.unit) ~= entry.name or Unit.num_meshes(entry.unit) ~= entry.count then
 			entry.dead = true
+			v.stale = (v.stale or 0) + 1
+			if v.stale <= 3 then M.log("draw distances: a unit of the map is gone or replaced, left alone (" .. v.stale .. ")") end
 			return
 		end
 		for _, m in ipairs(entry.meshes) do Unit.set_mesh_visibility(entry.unit, m, on) end
@@ -787,6 +793,7 @@ function M.view(x, y)
 	local count = #v.pieces
 	local step = math.max(1, math.ceil(count * M.VIEW_SHARE))
 	for _ = 1, math.min(step, count) do
+		if changed >= M.VIEW_CHANGES then break end
 		local p = v.pieces[v.next]
 		v.next = v.next % count + 1
 		changed = changed + view_lib.update(p, x, y, scale, show)

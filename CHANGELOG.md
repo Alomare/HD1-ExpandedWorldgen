@@ -2,6 +2,10 @@
 
 New, changed, fixed or removed features, one line each, brief and direct. The section for a release becomes the release notes.
 
+## Next
+
+- Changed: draw distances change at most 300 units a frame, and leave alone any unit of the map that is gone or replaced.
+
 ## 0.4.0
 
 - New: units far from the camera are hidden by their size, small ones first, so the largest maps keep their frame rate with a long view. Only the picture of each player changes.
