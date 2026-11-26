@@ -645,7 +645,7 @@ local function spawn(self, wg, original, spawner, register, ...)
 						-- hidden on purpose (volumes, markers), and showing one again draws it (seen in game:
 						-- red sheets over the map).
 						local shown = {}
-						if not (EntityAux and EntityAux.is_entity(u)) then
+						if Unit.alive(u) and not (EntityAux and EntityAux.is_entity(u)) then
 							for m = 0, Unit.num_meshes(u) - 1 do
 								if Unit.mesh_visibility(u, m) then shown[#shown + 1] = m end
 							end
@@ -758,6 +758,11 @@ function M.view(x, y)
 	if not v then return 0 end
 	local Unit = G("Unit")
 	local function show(entry, on)
+		-- Level units can be gone (destroyed by the level or the game): touching one ends the game.
+		if entry.dead or not Unit.alive(entry.unit) then
+			entry.dead = true
+			return
+		end
 		for _, m in ipairs(entry.meshes) do Unit.set_mesh_visibility(entry.unit, m, on) end
 	end
 	local scale, changed = M.view_scale, 0

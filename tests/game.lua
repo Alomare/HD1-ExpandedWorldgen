@@ -178,6 +178,7 @@ function M.install()
 		camera = function() return {} end,
 		set_unit_visibility = function(u, shown) u.shown = shown end,
 		num_meshes = function() return 1 end,
+		alive = function(u) return not u.dead end,
 		mesh_visibility = function(u) return u.mesh_shown ~= false end,
 		set_mesh_visibility = function(u, _, shown) u.mesh_shown = shown end,
 		local_position = function(u) return u.pose.t end,
