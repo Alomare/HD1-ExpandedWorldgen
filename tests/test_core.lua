@@ -280,4 +280,54 @@ test("props: land inside their piece, only on the kinds and biomes asked, the sa
 	end
 end)
 
+local view = obsidian.module("src/view")
+
+test("view: units are drawn largest first, each up to a distance that grows with its size", function()
+	local units, radii = { "stone", "ground", "tree", "rock" }, { 0.5, 17, 3, 1.5 }
+	local p = view.piece(0, 0, 0, 0, units, radii)
+	eq(p.units[1], "ground"); eq(p.units[4], "stone")
+	local shown = {}
+	for _, u in ipairs(units) do shown[u] = true end
+	local function show(u, on) shown[u] = on end
+	-- Inside the piece everything is drawn.
+	view.update(p, 12, 12, 1, show)
+	eq(p.n, 4)
+	-- Far off, only what reaches that far: ground (40 + 20 * 17 = 380 m), tree (100 m).
+	view.update(p, 24 + 150, 12, 1, show)
+	eq(p.n, 1, "at 150 m only the ground")
+	yes(shown.ground and not shown.tree and not shown.stone and not shown.rock)
+	view.update(p, 24 + 90, 12, 1, show)
+	eq(p.n, 2, "at 90 m the tree comes back")
+	yes(shown.tree and not shown.rock)
+	-- A larger scale draws further.
+	view.update(p, 24 + 150, 12, 2.5, show)
+	eq(p.n, 3)
+	-- Past the ground's distance nothing is drawn.
+	view.update(p, 24 + 1000, 12, 1, show)
+	eq(p.n, 0)
+	view.reset(p, show)
+	eq(p.n, 4)
+	yes(shown.stone and shown.ground)
+end)
+
+test("view: a unit at the edge of its distance stays until it is past it by the margin", function()
+	local p = view.piece(0, 0, 0, 0, { "a" }, { 3 })
+	local function show() end
+	local reach = view.BASE + view.PER_METRE * 3
+	view.update(p, 24 + reach + view.MARGIN * 0.5, 12, 1, show)
+	eq(p.n, 1, "inside the margin")
+	view.update(p, 24 + reach + view.MARGIN + 1, 12, 1, show)
+	eq(p.n, 0, "past the margin")
+	view.update(p, 24 + reach - 1, 12, 1, show)
+	eq(p.n, 1, "back within reach")
+end)
+
+test("view: distance is to the nearest cell of a wide piece", function()
+	local p = view.piece(2, 3, 4, 3, {}, {})
+	near(view.distance(p, 80, 80), 0, 1e-9, "inside")
+	near(view.distance(p, 48 - 30, 84), 30, 1e-9, "west")
+	near(view.distance(p, 120 + 3, 96 + 4), 5, 1e-9, "north-east corner")
+	eq(view.clamp_scale(0), nil); eq(view.clamp_scale(100), view.MAX_SCALE); eq(view.clamp_scale("2"), 2)
+end)
+
 return T

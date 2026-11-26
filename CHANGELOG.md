@@ -2,6 +2,10 @@
 
 New, changed, fixed or removed features, one line each, brief and direct. The section for a release becomes the release notes.
 
+## Next
+
+- New: units far from the camera are hidden by their size, small ones first, so the largest maps keep their frame rate with a long view. Only the picture of each player changes.
+
 ## 0.3.0
 
 - Fixed: the largest maps with land beyond the edge hung, went black or crashed the game as the mission started, past the 65536 units the game holds in a world.

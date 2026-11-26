@@ -21,6 +21,7 @@ local regions = obsidian.module("src/regions")
 local relief_lib = obsidian.module("src/relief")
 local profiles = obsidian.module("src/profile")
 local props_lib = obsidian.module("src/props")
+local view_lib = obsidian.module("src/view")
 
 local M = { rules = {}, active = nil, log = function() end }
 M.NO_BACKDROP_SHEAR = false -- experiment
@@ -594,6 +595,30 @@ local function spawn(self, wg, original, spawner, register, ...)
 			wg.units[#wg.units + 1] = { unit = unit, x = q.x, y = q.y }
 		end
 	end
+	-- Draw distances (src/view.lua): every piece's units the game doesn't track, with their size.
+	do
+		local ok, err = pcall(function()
+			local EntityAux = G("EntityAux")
+			local pieces, n = {}, 0
+			for _, e in ipairs(list) do
+				if e.level then
+					local units, radii = {}, {}
+					for _, u in ipairs(Level.units(e.level)) do
+						if not (EntityAux and EntityAux.is_entity(u)) then
+							local got, _, ext = pcall(Unit.box, u)
+							units[#units + 1] = u
+							radii[#radii + 1] = (got and ext) and math.sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z) or 1
+						end
+					end
+					local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot or 0, e.size_x or 1, e.size_y or 1)
+					pieces[#pieces + 1] = view_lib.piece(x0, y0, x1, y1, units, radii)
+					n = n + #units
+				end
+			end
+			wg.view = { pieces = pieces, units = n, next = 1 }
+		end)
+		if not ok then M.log("draw distances failed: " .. tostring(err)) end
+	end
 	M.active = self
 	wg.world_units = units
 	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared, %d units in the world, %d backdrop pieces left out"):format(#list, #wg.units,
@@ -673,6 +698,37 @@ function M.cull(x, y)
 			set(shown, { q.unit })
 		end
 	end
+end
+
+-- Draw distances (src/view.lua), for this player's camera at (x, y). M.view_scale: nil draws
+-- everything; a number scales the distances. Pieces are gone through a share at a time, so a frame
+-- never walks a whole map.
+M.view_scale = 1
+M.VIEW_SHARE = 0.5 -- of the pieces each call
+function M.view(x, y)
+	local self = M.active
+	local wg = self and self.wg
+	local v = wg and wg.view
+	if not v then return 0 end
+	local Unit = G("Unit")
+	local function show(u, on) Unit.set_unit_visibility(u, on) end
+	local scale, changed = M.view_scale, 0
+	if not scale then
+		if v.scaled then
+			for _, p in ipairs(v.pieces) do view_lib.reset(p, show) end
+			v.scaled = false
+		end
+		return 0
+	end
+	v.scaled = true
+	local count = #v.pieces
+	local step = math.max(1, math.ceil(count * M.VIEW_SHARE))
+	for _ = 1, math.min(step, count) do
+		local p = v.pieces[v.next]
+		v.next = v.next % count + 1
+		changed = changed + view_lib.update(p, x, y, scale, show)
+	end
+	return changed
 end
 
 -- The height of the ground at a world position in the mission being played: 0 on a flat map.

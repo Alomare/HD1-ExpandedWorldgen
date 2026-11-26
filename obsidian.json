@@ -17,6 +17,7 @@
     "src/relief.lua",
     "src/profile.lua",
     "src/props.lua",
+    "src/view.lua",
     "src/level.lua"
   ],
   "loader_api": 1

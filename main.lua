@@ -13,6 +13,7 @@ local level = obsidian.module("src/level")
 local shapes = obsidian.module("src/shapes")
 local regions = obsidian.module("src/regions")
 local profiles = obsidian.module("src/profile")
+local view = obsidian.module("src/view")
 
 level.log = function(text)
 	obsidian.log(text)
@@ -20,16 +21,36 @@ end
 
 level.install(obsidian.hook)
 
--- Backdrop pieces and props far from the camera are hidden, where a profile asks for that.
-local frame = 0
+-- Where this player's camera is: the camera the game draws with (a free or third person camera
+-- moves it), else the camera manager's.
+local function camera_position(manager)
+	local ok, pos = pcall(function()
+		return rawget(_G, "Camera").world_position(manager.viewport:get_camera())
+	end)
+	if ok and pos then return pos end
+	if manager.get_position and manager.position then return manager:get_position() end
+	return nil
+end
+
+-- Units far from the camera are hidden by their size (src/view.lua); backdrop pieces and props far
+-- from it too, where a profile asks for that.
+local frame, view_failed = 0, false
 if obsidian.on_frame then
 	obsidian.on_frame(function()
 		frame = frame + 1
-		if frame % 20 ~= 0 or not level.active then return end
+		if not level.active then return end
 		local camera = rawget(_G, "CameraManager")
-		if not (camera and camera.get_position and camera.position) then return end
-		local pos = camera:get_position()
-		level.cull(pos.x, pos.y)
+		if type(camera) ~= "table" then return end
+		local pos = camera_position(camera)
+		if not pos then return end
+		if not view_failed then
+			local ok, err = pcall(level.view, pos.x, pos.y)
+			if not ok then
+				view_failed = true
+				obsidian.log("draw distances stopped: " .. tostring(err))
+			end
+		end
+		if frame % 20 == 0 then level.cull(pos.x, pos.y) end
 	end)
 end
 
@@ -76,6 +97,18 @@ end
 -- flat map and outside a mission.
 function api.height(x, y)
 	return level.height(x, y)
+end
+
+-- How far this player sees the units of a map made by a rule: a scale of the draw distances (1 is
+-- the default, 0.5 to 8), or false to draw everything. Only this player's picture changes, so the
+-- value may differ between players. Answers the scale in use.
+function api.view(scale)
+	if scale == false then
+		level.view_scale = nil
+	elseif scale ~= nil then
+		level.view_scale = view.clamp_scale(scale) or level.view_scale
+	end
+	return level.view_scale or false
 end
 
 -- What the generator did for the mission being played, or nil when the map is the game's own:
