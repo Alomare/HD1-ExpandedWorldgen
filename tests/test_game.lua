@@ -492,7 +492,7 @@ test("unit budget: the backdrop stops where the world would pass it, every piece
 	eq(#l.spawn_list - kept, all - rings, "every piece of the map loads")
 	yes(kept >= 18 and kept <= 20, "the backdrop stops at the budget: " .. kept .. " of " .. rings)
 	eq(l.wg.cut, rings - kept)
-	yes(l.wg.world_units <= (all - rings + 20) * 2, "the world within the budget: " .. l.wg.world_units)
+	yes(l.wg.world_units - (l.wg.bridge_units or 0) <= (all - rings + 20) * 2, "the world within the budget: " .. l.wg.world_units)
 end)
 
 -- The map's own pieces always load, so the largest maps are planned to fit: with the units each
@@ -632,6 +632,47 @@ test("a rule that fails, or a step of the mod that fails, leaves the game's own 
 	local seed = next(baseline)
 	eq(signature(game.build(seed, true)), baseline[seed])
 	yes(game.log[1] and game.log[1]:find("boom", 1, true), "logged")
+end)
+
+test("draw distances: meshes far from the camera are hidden and come back near it; bridges load hidden", function()
+	with_profile({ id = "far", size = 2.5, shape = "rectangle", relief = { height = 40, step = 8 } })
+	local l = game.build(game.seed(3, "forest", "bugs", 6), true)
+	no_failures()
+	yes(l.wg.view and #l.wg.view.pieces > 50, "pieces with draw distances")
+	yes((l.wg.bridges or 0) > 0, "bridges under the gaps: " .. tostring(l.wg.bridges))
+	local bridge_levels = 0
+	for _, lv in ipairs(game.levels) do
+		if lv.name:find("wg_bridge_", 1, true) then
+			bridge_levels = bridge_levels + 1
+			yes(lv.path:find("env_desert/", 1, true) or lv.path:find("desert", 1, true), "bridges from the desert ground: " .. lv.path)
+			for _, u in ipairs(lv.units) do eq(u.shown, false, "bridge units hidden") end
+		end
+	end
+	eq(bridge_levels, l.wg.bridges)
+	local saved = level.active
+	level.active = l
+	local function walk(x, y)
+		for _ = 1, 4 do level.view(x, y) end
+	end
+	walk(-5000, -5000)
+	local hidden, total = 0, 0
+	for _, p in ipairs(l.wg.view.pieces) do
+		for _, entry in ipairs(p.units) do
+			total = total + 1
+			if entry.unit.mesh_shown == false then hidden = hidden + 1 end
+		end
+	end
+	eq(hidden, total, "everything hidden 5 km away")
+	local p = l.wg.view.pieces[1]
+	walk((p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2)
+	for _, entry in ipairs(p.units) do yes(entry.unit.mesh_shown ~= false, "shown again near the camera") end
+	level.view_scale = nil
+	walk(-5000, -5000)
+	for _, q in ipairs(l.wg.view.pieces) do
+		for _, entry in ipairs(q.units) do yes(entry.unit.mesh_shown ~= false, "all shown with draw distances off") end
+	end
+	level.view_scale = 1
+	level.active = saved
 end)
 
 return T

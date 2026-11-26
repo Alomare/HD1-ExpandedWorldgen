@@ -5,6 +5,8 @@ New, changed, fixed or removed features, one line each, brief and direct. The se
 ## Next
 
 - New: units far from the camera are hidden by their size, small ones first, so the largest maps keep their frame rate with a long view. Only the picture of each player changes.
+- Changed: terrain height reaches 80 metres, with steps up to 10 metres a tile (slopes up to 30 degrees).
+- New: hidden ground under the borders of sloped tiles closes the gaps their tilt leaves, so players, enemies and items stay on steep ground.
 
 ## 0.3.0
 

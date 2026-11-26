@@ -3,6 +3,7 @@
 -- seed, every number is brought inside what the game can carry.
 local shapes = obsidian.module("src/shapes")
 local regions = obsidian.module("src/regions")
+local relief = obsidian.module("src/relief")
 
 local M = {}
 
@@ -74,8 +75,8 @@ function M.resolve(p, ctx, rng)
 	if p.relief then
 		local rel = type(p.relief) == "table" and p.relief or { height = tonumber(p.relief) }
 		out.relief = {
-			height = clamp(rel.height, 0, 40, 6),
-			step = clamp(rel.step, 0.1, 5, 1.25),
+			height = clamp(rel.height, 0, relief.MAX_HEIGHT, 6),
+			step = clamp(rel.step, 0.1, relief.MAX_STEP, 1.25),
 			rough = clamp(rel.rough, 0, 1, 0.5),
 		}
 		if out.relief.height <= 0 then out.relief = nil end

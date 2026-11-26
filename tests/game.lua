@@ -177,6 +177,9 @@ function M.install()
 	_G.Unit = {
 		camera = function() return {} end,
 		set_unit_visibility = function(u, shown) u.shown = shown end,
+		num_meshes = function() return 1 end,
+		mesh_visibility = function(u) return u.mesh_shown ~= false end,
+		set_mesh_visibility = function(u, _, shown) u.mesh_shown = shown end,
 		local_position = function(u) return u.pose.t end,
 		local_pose = function(u) return u.pose end,
 		set_local_pose = function(u, _, m) u.pose = m end,

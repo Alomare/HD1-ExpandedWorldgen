@@ -116,14 +116,17 @@ end
 -- entries: the spawn list once the game has re-based it (x, y, rot, size_x, size_y of each piece).
 -- box: { min_x, min_y, max_x, max_y } in cells, everything a piece may stand on, edge included.
 -- opts: height (metres from the lowest to the highest ground, 6), step (the most one cell rises in
--- metres, 1.25, capped at 5 which is under 12 degrees: a tilted piece is a little shorter across,
--- by the cosine of the tilt, which place() makes up for with a shear), rough (0 to 1, 0.5).
+-- metres, 1.25, capped at MAX_STEP, 10 m or 23 degrees along one axis: a tilted piece is shorter
+-- across by the cosine of the tilt, which place() makes up for with a shear and bridges() with
+-- hidden slabs under the gaps), rough (0 to 1, 0.5).
 -- Answers a relief: { height = function(x, y) in metres, slope = function(x, y) -> dz/dx, dz/dy,
 -- place = function(entry) -> pos, quat, top = highest ground }, or nil when it came out flat.
+M.MAX_HEIGHT = 80
+M.MAX_STEP = 10
 function M.build(entries, box, rng, opts)
 	opts = opts or {}
-	local total = math.max(0, math.min(40, tonumber(opts.height) or 6))
-	local step = math.max(0.1, math.min(5, tonumber(opts.step) or 1.25))
+	local total = math.max(0, math.min(M.MAX_HEIGHT, tonumber(opts.height) or 6))
+	local step = math.max(0.1, math.min(M.MAX_STEP, tonumber(opts.step) or 1.25))
 	local rough = math.max(0, math.min(1, tonumber(opts.rough) or 0.5))
 	if total <= 0 then return nil end
 
@@ -153,6 +156,11 @@ function M.build(entries, box, rng, opts)
 	low, high = 0, (high - low) * scale
 
 	local R = { top = high - low, box = box, fx = fx, fy = fy }
+	-- The steepest ground, in degrees (the steepest runs of both profiles crossing).
+	local ra, rb = 0, 0
+	for k = box[1], box[3] do ra = math.max(ra, math.abs(fx[k + 1] - fx[k])) end
+	for k = box[2], box[4] do rb = math.max(rb, math.abs(fy[k + 1] - fy[k])) end
+	R.steepest = math.deg(math.atan(math.sqrt(ra * ra + rb * rb) / TILE))
 
 	function R.height(x, y)
 		return sample(fx, box[1], box[3], x) + sample(fy, box[2], box[4], y)
@@ -205,8 +213,50 @@ function M.build(entries, box, rng, opts)
 		return pos, { x = q[1], y = q[2], z = q[3], w = q[4] }, sh
 	end
 
+	-- A slab of one cell laid on the plane of slopes (a, b) through the point (cx, cy, cz): the
+	-- position and rotation to load a one-cell level with, as place() answers them.
+	function R.slab(cx, cy, cz, a, b)
+		local len = math.sqrt(a * a + b * b + 1)
+		local nx, ny, nz = -a / len, -b / len, 1 / len
+		local q = { 0, 0, 0, 1 }
+		local axis = math.sqrt(nx * nx + ny * ny)
+		if axis > 1e-9 then q = M.axis_angle(-ny / axis, nx / axis, 0, math.acos(nz)) end
+		local ox, oy, oz = M.rotate(q, TILE / 2, TILE / 2, 0)
+		return { x = cx - ox, y = cy - oy, z = cz - oz }, { x = q[1], y = q[2], z = q[3], w = q[4] }
+	end
+
+	-- Bridges: a tilted piece's collision is shorter across than its cell by the cosine of its tilt,
+	-- which leaves a gap on each border it tilts across (about 1.5 m between two pieces at 20
+	-- degrees). Under every such border, a hidden slab on the plane of the piece, shifted
+	-- M.BRIDGE_SHIFT metres toward the border from the middle of the cell, closes the gap from that
+	-- side; the slab of the neighbour closes it from the other. cells: { [key] = piece } for every
+	-- cell players walk on. Answers { { pos, quat, x, y }, ... }.
+	function R.bridges(cells)
+		local out = {}
+		for _, k in ipairs(grid.sorted(cells)) do
+			local x, y = grid.unkey(k)
+			local cx, cy = (x + 0.5) * TILE, (y + 0.5) * TILE
+			local a, b = R.slope(cx, cy)
+			for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+				local other = cells[grid.key(x + d[1], y + d[2])]
+				local s = d[1] ~= 0 and a or b
+				if other and other ~= cells[k] and math.abs(s) >= M.BRIDGE_SLOPE then
+					local bx, by = cx + d[1] * M.BRIDGE_SHIFT, cy + d[2] * M.BRIDGE_SHIFT
+					local bz = R.height(cx, cy) + a * (bx - cx) + b * (by - cy) - M.BRIDGE_DROP
+					local pos, quat = R.slab(bx, by, bz, a, b)
+					out[#out + 1] = { pos = pos, quat = quat, x = bx, y = by }
+				end
+			end
+		end
+		return out
+	end
+
 	return R
 end
+
+M.BRIDGE_SHIFT = 2 -- metres from the middle of the cell toward the border
+M.BRIDGE_SLOPE = 0.08 -- the least slope across a border that leaves a gap worth closing (4.6 degrees)
+M.BRIDGE_DROP = 0.03 -- metres below the piece's own plane
 
 -- Whether a point lies within w metres of a cell border.
 function M.on_border(x, y, w)

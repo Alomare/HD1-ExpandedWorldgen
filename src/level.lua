@@ -38,6 +38,8 @@ M.UNIT_STEP = 150
 -- (tests/data/units.lua) and worked out over the largest maps by tools/unit_stats.lua.
 M.OWN_UNITS = 38000
 M.UNITS_PER_CELL = { desert = 50, forest = 40, snow = 41, lava = 75, city = 40, other = 75 }
+M.BRIDGE_PIECE = "common_1x1_genericdesert_01"
+M.BRIDGE_UNITS = 52000 -- bridges stop where the world would pass this many units
 M.SLIT = 0.5-- metres from a cell border where a ground ray may fall through a slit between tilted pieces
 M.NUDGE = { { 0.6, 0 }, { -0.6, 0 }, { 0, 0.6 }, { 0, -0.6 } } -- where such a ray is cast again
 
@@ -235,6 +237,14 @@ local function setup(self, world, seed)
 	end
 	for _, name in ipairs(p.packages) do
 		if not index_of(wg.extra, name) then wg.extra[#wg.extra + 1] = name end
+	end
+	-- Relief closes the gaps between tilted pieces with hidden slabs (relief.bridges), loaded from
+	-- the plainest piece of the game, a desert ground of two units.
+	local desert = settings.mission.desert
+	if p.relief and desert and desert.path and find_named(for_faction(desert.common or {}, faction), M.BRIDGE_PIECE) then
+		wg.bridge = desert.path .. M.BRIDGE_PIECE
+		local package = desert.path .. self.enemy
+		if self.environment_name ~= "desert" and not index_of(wg.extra, package) then wg.extra[#wg.extra + 1] = package end
 	end
 	self.wg = wg
 	M.log(("map %s: profile %s (%s), shape %s x%.2f, biomes %d, relief %s"):format(tostring(seed), p.id, tostring(owner),
@@ -595,6 +605,33 @@ local function spawn(self, wg, original, spawner, register, ...)
 			wg.units[#wg.units + 1] = { unit = unit, x = q.x, y = q.y }
 		end
 	end
+	-- Bridges under the gaps between tilted pieces (relief.bridges): loaded hidden, collision only.
+	wg.bridges = 0
+	if wg.relief and wg.bridge and not M.dbg("no_bridges") then
+		local ok, err = pcall(function()
+			local cells = {}
+			for i, e in ipairs(list) do
+				if e.level and not e.wg_backdrop then
+					local x0, y0, x1, y1 = grid.span(e.x, e.y, e.rot or 0, e.size_x or 1, e.size_y or 1)
+					for cx = x0, x1 do
+						for cy = y0, y1 do cells[key(cx, cy)] = i end
+					end
+				end
+			end
+			for i, b in ipairs(wg.relief.bridges(cells)) do
+				if units + 8 > M.BRIDGE_UNITS then break end
+				local level = proxy:load_level_with_object_sets(("wg_bridge_%d"):format(i), wg.bridge, false, {}, nil,
+					Vector3(b.pos.x, b.pos.y, b.pos.z), Quaternion.from_elements(b.quat.x, b.quat.y, b.quat.z, b.quat.w))
+				local own = Level.units(level)
+				for _, u in ipairs(own) do Unit.set_unit_visibility(u, false) end
+				units = units + #own
+				wg.bridges = wg.bridges + 1
+				wg.bridge_units = (wg.bridge_units or 0) + #own
+			end
+		end)
+		if not ok then M.log("bridges failed: " .. tostring(err)) end
+	end
+
 	-- Draw distances (src/view.lua): every piece's units the game doesn't track, with their size.
 	do
 		local ok, err = pcall(function()
@@ -604,9 +641,18 @@ local function spawn(self, wg, original, spawner, register, ...)
 				if e.level then
 					local units, radii = {}, {}
 					for _, u in ipairs(Level.units(e.level)) do
+						-- Only the meshes drawn when the level loaded: levels hold units and meshes that are
+						-- hidden on purpose (volumes, markers), and showing one again draws it (seen in game:
+						-- red sheets over the map).
+						local shown = {}
 						if not (EntityAux and EntityAux.is_entity(u)) then
+							for m = 0, Unit.num_meshes(u) - 1 do
+								if Unit.mesh_visibility(u, m) then shown[#shown + 1] = m end
+							end
+						end
+						if #shown > 0 then
 							local got, _, ext = pcall(Unit.box, u)
-							units[#units + 1] = u
+							units[#units + 1] = { unit = u, meshes = shown }
 							radii[#radii + 1] = (got and ext) and math.sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z) or 1
 						end
 					end
@@ -621,8 +667,8 @@ local function spawn(self, wg, original, spawner, register, ...)
 	end
 	M.active = self
 	wg.world_units = units
-	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared, %d units in the world, %d backdrop pieces left out"):format(#list, #wg.units,
-		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.sheared or 0, units, wg.cut or 0))
+	M.log(("map spawned: %d pieces, %d props, %s level entities, highest ground %.1f m, %d units sheared, %d units in the world, %d backdrop pieces left out, %d bridges of %d units, steepest %.1f degrees"):format(#list, #wg.units,
+		tostring(spawner and spawner.num_level_entities), wg.relief and wg.relief.top or 0, wg.sheared or 0, units, wg.cut or 0, wg.bridges or 0, wg.bridge_units or 0, wg.relief and wg.relief.steepest or 0))
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -711,7 +757,9 @@ function M.view(x, y)
 	local v = wg and wg.view
 	if not v then return 0 end
 	local Unit = G("Unit")
-	local function show(u, on) Unit.set_unit_visibility(u, on) end
+	local function show(entry, on)
+		for _, m in ipairs(entry.meshes) do Unit.set_mesh_visibility(entry.unit, m, on) end
+	end
 	local scale, changed = M.view_scale, 0
 	if not scale then
 		if v.scaled then

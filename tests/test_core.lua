@@ -213,6 +213,41 @@ test("relief: every corner of every piece lies on the ground it is given, so nei
 	yes(sloped > 50, "pieces sloping both ways were tried: " .. sloped)
 end)
 
+test("relief: bridges lie on the plane of their cell and reach past the gap of every tilted border", function()
+	local checked = 0
+	for seed = 1, 10 do
+		local entries = fake_entries(14, 12, {})
+		local r = relief.build(entries, { 0, 0, 13, 11 }, rng.new(seed, "relief"), { height = 60, step = 9, rough = 0.8 })
+		if r then
+			yes(r.steepest > 15 and r.steepest < 35, "steep ground: " .. r.steepest)
+			local cells = {}
+			for i, e in ipairs(entries) do cells[grid.key(e.x, e.y)] = i end
+			local bridges = r.bridges(cells)
+			yes(#bridges > 0)
+			for _, b in ipairs(bridges) do
+				local q = { b.quat.x, b.quat.y, b.quat.z, b.quat.w }
+				-- The slab's middle and its far edge toward the border, on the cell's plane.
+				local mx, my, mz = relief.rotate(q, 12, 12, 0)
+				mx, my, mz = mx + b.pos.x, my + b.pos.y, mz + b.pos.z
+				near(mx, b.x, 1e-6); near(my, b.y, 1e-6)
+				local cx, cy = (math.floor(b.x / 24) + 0.5) * 24, (math.floor(b.y / 24) + 0.5) * 24
+				local a, s = r.slope(cx, cy)
+				near(mz, r.height(cx, cy) + a * (b.x - cx) + s * (b.y - cy) - relief.BRIDGE_DROP, 1e-6, "on the plane")
+				-- Toward the border it points to, the slab reaches past the border.
+				local dx, dy = b.x - cx, b.y - cy
+				local ex, ey = relief.rotate(q, dx ~= 0 and (dx > 0 and 24 or 0) or 12, dy ~= 0 and (dy > 0 and 24 or 0) or 12, 0)
+				ex, ey = ex + b.pos.x, ey + b.pos.y
+				if dx > 0 then yes(ex > cx + 12 + 0.5, "past the east border") end
+				if dx < 0 then yes(ex < cx - 12 - 0.5, "past the west border") end
+				if dy > 0 then yes(ey > cy + 12 + 0.5, "past the north border") end
+				if dy < 0 then yes(ey < cy - 12 - 0.5, "past the south border") end
+				checked = checked + 1
+			end
+		end
+	end
+	yes(checked > 500, "bridges checked: " .. checked)
+end)
+
 test("relief: flat when asked for none, and never below 0", function()
 	local entries = fake_entries(8, 8, {})
 	eq(relief.build(entries, { 0, 0, 7, 7 }, rng.new(1, "r"), { height = 0 }), nil)
@@ -237,11 +272,11 @@ end)
 local CTX = { environment = "desert", enemy = "bugs", difficulty = 8, seed = 1 }
 
 test("profile: numbers are brought inside the limits, and unknown names fall back", function()
-	local p = profiles.resolve({ shape = "nonsense", size = 99, across = 500, relief = { height = 900, step = 9 },
+	local p = profiles.resolve({ shape = "nonsense", size = 99, across = 500, relief = { height = 900, step = 90 },
 		biomes = { "desert", "moon", "snow", "snow", { env = "lava", weight = -3 } }, backdrop = 50,
 		objectives = { scale = 100, max = 99 }, props = { { unit = "a/b", per_tile = { 2, 400 } }, { per_tile = 1 } } }, CTX, rng.new(1, "p"))
 	eq(p.shape, "vanilla"); eq(p.size, 8); eq(p.across, shapes.MAX_ACROSS)
-	eq(p.relief.height, 40); eq(p.relief.step, 5)
+	eq(p.relief.height, relief.MAX_HEIGHT); eq(p.relief.step, relief.MAX_STEP)
 	eq(#p.biomes, 3); eq(p.biomes[1].env, "desert"); eq(p.biomes[2].env, "snow"); eq(p.biomes[3].env, "lava")
 	eq(p.backdrop.rings, profiles.MAX_RINGS)
 	eq(p.objectives.scale, 4); eq(p.objectives.max, 12)
